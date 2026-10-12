@@ -101,6 +101,8 @@ See "Hello world" examples using ML Drift's
 
 Check out the [samples](ml_drift/samples/) directory for more examples.
 
+Technical paper: [Scaling On-Device GPU Inference for Large Generative Models](https://arxiv.org/abs/2505.00232)
+
 ## Status
 
 ML Drift is actively developed and is the successor to the GPU delegate in
