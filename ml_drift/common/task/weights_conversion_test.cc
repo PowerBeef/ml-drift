@@ -1332,9 +1332,8 @@ TEST(CustomGroups, ConversionOHWIToOSpatialIOGroupITileOTile) {
                                   output.size() * sizeof(float)));
 
   std::vector<float> output_ref(total_elements_count, 0.0f);
-  RearrangeWeightsToOSpatialIOGroupITileOTile(
-      weights, 8, 8, 2, absl::MakeSpan(output_ref.data(), output_ref.size()),
-      0.0f);
+  RearrangeWeightsToOSpatialIOGroupITileOTile(weights, 8, 8, 2,
+                                              absl::MakeSpan(output_ref), 0.0f);
 
   EXPECT_EQ(output, output_ref);
 }
@@ -1402,9 +1401,8 @@ TEST(CustomGroups, ConversionOHWITokOICustomSpatialI4O4) {
                                   output.size() * sizeof(float)));
 
   std::vector<float> output_ref(total_elements_count, 0.0f);
-  RearrangeWeightsToOICustomSpatialI4O4(
-      weights, weight_desc.spatial_remap,
-      absl::MakeSpan(output_ref.data(), output_ref.size()));
+  RearrangeWeightsToOICustomSpatialI4O4(weights, weight_desc.spatial_remap,
+                                        absl::MakeSpan(output_ref));
 
   EXPECT_EQ(output, output_ref);
 }
