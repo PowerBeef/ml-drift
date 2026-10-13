@@ -268,6 +268,7 @@ MAIN_FUNCTION($0) {
   args.dst.Write(res_value, X, Y, S);
 }
 )";
+  op.flops_ = position_ids.tensor_desc.GetBHWCShape().DimensionsProduct();
   ctx.AddGpuOperation({ctx.params_i32}, {position_ids},
                       std::make_unique<GPUOperation>(std::move(op)),
                       "fill_position_ids");
@@ -298,6 +299,7 @@ TensorHandle SelectMask(BuildContext& ctx, const TensorHandle& src,
   auto select_mask_op = std::make_unique<GPUOperation>(CreateGpuOperation(
       definition, std::move(op_desc), mask.tensor_desc.GetBHWCShape(),
       dst.tensor_desc.GetBHWCShape()));
+  select_mask_op->flops_ = dst.tensor_desc.GetBHWCShape().DimensionsProduct();
   ctx.AddGpuOperation({src, mask}, {dst}, std::move(select_mask_op),
                       "select_mask");
   return dst;
@@ -390,6 +392,7 @@ GPUOperation AttentionMaskOp(const TensorDescriptor& params_desc,
                               LlmRuntimeParams::kTokenOffsetIndex);
   op.AddSrcTensor("params_tensor", params_desc);
   op.AddDstTensor("dst", out_desc);
+  op.flops_ = out_desc.GetBHWCShape().DimensionsProduct() * 2;
   return op;
 }
 
@@ -553,6 +556,8 @@ MAIN_FUNCTION($$0) {
   custom_op.AddDstTensor("cache_k", cache_k.tensor_desc);
   custom_op.AddDstTensor("cache_v", cache_v.tensor_desc);
   custom_op.code_ = code;
+  custom_op.write_size_ = k.tensor_desc.GetMemorySizeInBytes() +
+                          v.tensor_desc.GetMemorySizeInBytes();
 
   ctx.AddGpuOperation(
       {k, v, ctx.params_i32}, {cache_k, cache_v},
@@ -659,6 +664,9 @@ MAIN_FUNCTION($$0) {
   custom_op.AddDstTensor("local_k", k_local.tensor_desc);
   custom_op.AddDstTensor("local_v", v_local.tensor_desc);
   custom_op.code_ = code;
+  custom_op.read_size_ = k_local.tensor_desc.GetMemorySizeInBytes() +
+                         v_local.tensor_desc.GetMemorySizeInBytes() +
+                         ctx.params_i32.tensor_desc.GetMemorySizeInBytes();
 
   ctx.AddGpuOperation(
       {k, v, ctx.params_i32}, {k_local, v_local},
@@ -1021,6 +1029,14 @@ void TransformQKVRmsNormRoPE(BuildContext& ctx, const TensorHandle& position,
 
   custom_op.code_ = code;
   custom_op.tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;
+  custom_op.write_size_ = q_dst.tensor_desc.GetMemorySizeInBytes() +
+                          k.tensor_desc.GetMemorySizeInBytes() +
+                          v.tensor_desc.GetMemorySizeInBytes();
+  // Q/K: scaled RMSNorm (4) + RoPE (6) = 10; V: unscaled RMSNorm = 3.
+  custom_op.flops_ = (q->tensor_desc.GetBHWCShape().DimensionsProduct() +
+                      k.tensor_desc.GetBHWCShape().DimensionsProduct()) *
+                         10 +
+                     v.tensor_desc.GetBHWCShape().DimensionsProduct() * 3;
 
   std::vector<TensorHandle> inputs = {*q, k};
   if (!k_eq_v) {
@@ -1062,8 +1078,12 @@ GPUOperation CreateGeluTanhMulOp(const TensorDescriptor& gate_desc,
   definition.src_tensors.push_back(gate_desc);
   definition.src_tensors.push_back(up_desc);
   definition.dst_tensors.push_back(dst_desc);
-  return CreateGpuOperation(definition, std::move(op_desc),
-                            dst_desc.GetBHWCShape(), dst_desc.GetBHWCShape());
+  GPUOperation op =
+      CreateGpuOperation(definition, std::move(op_desc),
+                         dst_desc.GetBHWCShape(), dst_desc.GetBHWCShape());
+  // GELU tanh approx (8) + gate*up mul (1) = 9 FLOPs per element.
+  op.flops_ = dst_desc.GetBHWCShape().DimensionsProduct() * 9;
+  return op;
 }
 
 TensorHandle GeluTanhMul(BuildContext& ctx, const TensorHandle& gate,

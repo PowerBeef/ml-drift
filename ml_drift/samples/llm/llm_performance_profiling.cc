@@ -493,9 +493,12 @@ struct CategorySummaryStats {
 // Prints the LLM-specific breakdown tables (by Role + Op + Shape, and by
 // high-level LLM architectural category), sorted by descending GPU time.
 void PrintLlmBreakdownReport(absl::string_view phase_name,
-                             const LlmConfig& config,
+                             const LlmConfig& config, int active_tokens,
                              const ProfilingInfo& profiling_info,
                              bool print_per_dispatch) {
+  const int active_tokens_aligned = std::min(
+      config.cache_size,
+      AlignByN(active_tokens, ConvRuntimeCheckDesc::kChannelsAlignment));
   const double total_ms =
       absl::ToDoubleMilliseconds(profiling_info.GetTotalTime());
   std::cout << "\n============================================================="
@@ -548,7 +551,26 @@ void PrintLlmBreakdownReport(absl::string_view phase_name,
     std::string key = absl::StrCat(cls.role, "|", d.label, "|", shape_sig);
 
     const double ms = absl::ToDoubleMilliseconds(d.duration);
-    const uint64_t bytes = d.read_mem_size + d.write_mem_size;
+    uint64_t flops = d.flops;
+    uint64_t bytes = d.read_mem_size + d.write_mem_size;
+
+    // Scale runtime end-check ops proportionally to active tokens instead of
+    // over the full static KV cache dimension, which can overestimate FLOPs.
+    if (cls.category == "Attention Core (QK^T, Softmax, SV)") {
+      int static_cache_dim = 0;
+      if (absl::StartsWith(cls.role, "Attention Q*K^T") &&
+          !d.outshape.empty() && d.outshape[0].dimensions.size() >= 4) {
+        static_cache_dim = d.outshape[0].dimensions[3];
+      } else if ((cls.role == "Attention Softmax" ||
+                  absl::StartsWith(cls.role, "Attention Score*V")) &&
+                 !d.inshape.empty() && d.inshape[0].dimensions.size() >= 4) {
+        static_cache_dim = d.inshape[0].dimensions[3];
+      }
+      if (static_cache_dim > 0 && active_tokens_aligned < static_cache_dim) {
+        flops = flops * active_tokens_aligned / static_cache_dim;
+        bytes = bytes * active_tokens_aligned / static_cache_dim;
+      }
+    }
 
     AggregatedGroupStats& g = groups[key];
     if (g.count == 0) {
@@ -559,7 +581,7 @@ void PrintLlmBreakdownReport(absl::string_view phase_name,
     }
     g.count += 1;
     g.total_ms += ms;
-    g.total_flops += d.flops;
+    g.total_flops += flops;
     g.total_bytes += bytes;
 
     CategorySummaryStats& c = categories[cls.category];
@@ -568,10 +590,10 @@ void PrintLlmBreakdownReport(absl::string_view phase_name,
     }
     c.count += 1;
     c.total_ms += ms;
-    c.total_flops += d.flops;
+    c.total_flops += flops;
     c.total_bytes += bytes;
 
-    grand_total_flops += d.flops;
+    grand_total_flops += flops;
     grand_total_bytes += bytes;
   }
 
@@ -1141,8 +1163,9 @@ absl::Status RunLlmPerformanceProfiling() {
 #endif
 
     LlmConfig prefill_cfg = config;
-    PrintLlmBreakdownReport("PREFILL", prefill_cfg, prefill_profile,
-                            print_per_dispatch);
+    PrintLlmBreakdownReport("PREFILL", prefill_cfg,
+                            /*active_tokens=*/config.sequence_size,
+                            prefill_profile, print_per_dispatch);
 
     if (end_to_end_iters > 0) {
       const absl::Time e2e_start = absl::Now();
@@ -1228,8 +1251,9 @@ absl::Status RunLlmPerformanceProfiling() {
 
     LlmConfig decode_cfg = config;
     decode_cfg.sequence_size = 1;
-    PrintLlmBreakdownReport("DECODE", decode_cfg, decode_profile,
-                            print_per_dispatch);
+    PrintLlmBreakdownReport("DECODE", decode_cfg,
+                            /*active_tokens=*/clamped_offset + 1,
+                            decode_profile, print_per_dispatch);
 
     if (end_to_end_iters > 0) {
       const absl::Time e2e_start = absl::Now();
@@ -1299,7 +1323,8 @@ absl::Status RunLlmPerformanceProfiling() {
     LlmConfig greedy_cfg = config;
     greedy_cfg.sequence_size = 1;
     PrintLlmBreakdownReport("GREEDY POST-PROCESS (ArgMax)", greedy_cfg,
-                            greedy_profile, print_per_dispatch);
+                            /*active_tokens=*/1, greedy_profile,
+                            print_per_dispatch);
   }
 
   return absl::OkStatus();
