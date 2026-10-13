@@ -79,7 +79,10 @@ GPUOperation CreatePReLU(const GpuInfo& gpu_info,
                          const OperationDef& definition,
                          const PReLUAttributes& attr) {
   ElementwiseDescriptor op_desc = CreatePReLU(attr, definition.src_tensors[0]);
-  return CreateGpuOperation(definition, std::move(op_desc));
+  GPUOperation op = CreateGpuOperation(definition, std::move(op_desc));
+  // max(0, x) + min(0, x) * alpha: max, min, mul, add = 4 FLOPs.
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() * 4;
+  return op;
 }
 
 }  // namespace ml_drift

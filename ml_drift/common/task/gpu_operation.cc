@@ -1232,9 +1232,15 @@ absl::Status GPUOperation::AddOperation(const GpuInfo& gpu_info,
         absl::Substitute(elementwise_code_, out_var_declaration);
     elementwise_code_ = elementwise_code_ + "\n" + code;
   }
-  ABSL_RETURN_IF_ERROR(args_.Merge(std::move(operation->args_), unique_postfix,
-                                   {"src_tensor", "dst_tensor"}));
   for (size_t i = 1; i < operation->src_objects_names_.size(); ++i) {
+    if (read_size_ != -1) {
+      TensorDescriptor* src_desc;
+      if (operation
+              ->GetTensorDescriptor(operation->src_objects_names_[i], &src_desc)
+              .ok()) {
+        read_size_ += src_desc->GetMemorySizeInBytes();
+      }
+    }
     src_objects_names_.push_back(operation->src_objects_names_[i] +
                                  unique_postfix);
   }
@@ -1242,6 +1248,10 @@ absl::Status GPUOperation::AddOperation(const GpuInfo& gpu_info,
     dst_objects_names_.push_back(operation->dst_objects_names_[i] +
                                  unique_postfix);
   }
+  ABSL_RETURN_IF_ERROR(args_.Merge(std::move(operation->args_), unique_postfix,
+                                   {"src_tensor", "dst_tensor"}));
+  flops_ += operation->flops_;
+  write_size_ = operation->write_size_;
   return absl::OkStatus();
 }
 
@@ -1290,6 +1300,8 @@ absl::Status GPUOperation::AddReorderOperation(const BHWC& interm_shape,
 
   new_src_tensor_desc->CopyWithoutData(src_tensor_desc);
   reorder_code_ = code;
+  flops_ += operation->flops_;
+  read_size_ = operation->read_size_;
   return absl::OkStatus();
 }
 
@@ -1733,6 +1745,9 @@ absl::Status FuseElemWithElemInternal(
       absl::StrReplaceAll(elem1.elementwise_code_, replacements_new);
 
   *result = GPUOperation();
+  result->flops_ = elem0.flops_ + elem1.flops_;
+  result->read_size_ = elem0.read_size_;
+  result->write_size_ = elem1.write_size_;
   result->elementwise_ = true;
   result->elementwise_inputs_ = 1;
   result->tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;

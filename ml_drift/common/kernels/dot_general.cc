@@ -14,6 +14,7 @@
 
 #include "ml_drift/common/kernels/dot_general.h"
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -190,6 +191,13 @@ GPUOperation CreateDotGeneral(const OperationDef& op_def,
   op.AddDstTensor("dst_tensor", op_def.dst_tensors[0]);
   op.code_ = GetDotGeneralCode(op_def, attr);
   op.tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;
+  uint64_t contracting_elements = 1;
+  const BHWDC lhs_shape = op_def.src_tensors[0].GetBHWDCShape();
+  for (Axis axis : attr.lhs_contracting_axes) {
+    contracting_elements *= lhs_shape.get(axis);
+  }
+  op.flops_ = op_def.dst_tensors[0].GetBHWDCShape().DimensionsProduct() *
+              contracting_elements * 2;
   return op;
 }
 

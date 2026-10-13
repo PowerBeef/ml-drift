@@ -31,6 +31,9 @@ namespace ml_drift {
 Resize::Resize(const OperationDef& definition, const Resize2DAttributes& attr)
     : attr_(attr) {
   code_ = GetResizeCode(definition, attr_);
+  // 2D bilinear interpolation (~4 FLOPs) vs nearest coord scaling (2 FLOPs).
+  flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() *
+           (attr.type == SamplingType::kBilinear ? 4 : 2);
 }
 
 Resize::Resize(Resize&& operation)
@@ -133,6 +136,9 @@ Resize3D::Resize3D(const OperationDef& definition,
                    const Resize3DAttributes& attr)
     : attr_(attr) {
   code_ = GetResize3DCode(definition, attr_);
+  // 3D trilinear interpolation (~8 FLOPs) vs nearest coord scaling (2 FLOPs).
+  flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() *
+           (attr.type == SamplingType::kBilinear ? 8 : 2);
 }
 
 Resize3D::Resize3D(Resize3D&& operation)

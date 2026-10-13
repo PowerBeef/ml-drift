@@ -136,6 +136,8 @@ Softmax1x1::Softmax1x1(const OperationDef& definition, const GpuInfo& gpu_info,
     }
   }
   code_ = GetSoftmaxKernelCode(definition, gpu_info);
+  // Reduce: max, sub, exp, sum = 4; full softmax adds sub, exp, mul (+3 = 7).
+  flops_ = shape.DimensionsProduct() * (reduce_only ? 4 : 7);
 }
 
 std::string Softmax1x1::GetSoftmaxKernelCode(const OperationDef& op_def,

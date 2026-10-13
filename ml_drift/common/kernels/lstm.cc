@@ -102,6 +102,9 @@ GPUOperation CreateLSTM(const OperationDef& definition,
   op.AddDstTensor("activation", definition.dst_tensors[1]);
   op.code_ = GetLSTMCode(definition, gpu_info);
   op.tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;
+  // 4 gates (3 sigmoids = 9, 1 tanh = 2) + cell update (3) + hidden (2) = 16.
+  op.flops_ =
+      definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() * 16;
   return op;
 }
 

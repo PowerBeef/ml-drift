@@ -162,6 +162,7 @@ GPUOperation CreateAccumulateInputChannels(const OperationDef& definition,
   op.code_ = GetAccumulateInputChannelsCode(input_data_type,
                                             src_desc.GetStorageType());
   op.tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;
+  op.flops_ = input_shape.DimensionsProduct();
   return op;
 }
 

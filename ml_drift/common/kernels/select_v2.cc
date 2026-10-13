@@ -102,6 +102,7 @@ GPUOperation CreateSelectV2(const OperationDef& definition,
   op.AddSrcTensor("false_tensor", definition.src_tensors[2]);
   op.AddDstTensor("dst_tensor", definition.dst_tensors[0]);
   op.code_ = GetSelectV2Code(definition);
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct();
   return op;
 }
 

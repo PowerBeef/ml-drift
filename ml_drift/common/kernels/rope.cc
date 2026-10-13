@@ -100,6 +100,8 @@ GPUOperation CreateRoPE(const GpuInfo& gpu_info, const OperationDef& definition,
       {{"Type", ToUclDataType(definition.dst_tensors[0].GetDataType(), 4)}},
       &code);
   op.code_ = code;
+  // Timescale/sin/cos (~3 FLOPs) + 2D rotation mul/sub/add (3 FLOPs) = 6.
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() * 6;
   return op;
 }
 
@@ -232,6 +234,8 @@ GPUOperation CreateSplitRoPEConcat(const GpuInfo& gpu_info,
       {{"Type", ToUclDataType(definition.dst_tensors[0].GetDataType(), 4)}},
       &code);
   op.code_ = code;
+  // Timescale/sin/cos (~3 FLOPs) + 2D rotation mul/sub/add (3 FLOPs) = 6.
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() * 6;
   op.AllowFuseInputReorder(true);
   return op;
 }

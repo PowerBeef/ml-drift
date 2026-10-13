@@ -702,6 +702,9 @@ MeanStdDevNormalization::MeanStdDevNormalization(
                                definition.dst_tensors[0].HasAxis(Axis::kBatch),
                                shape.c % 4 == 0, two_step, gamma != nullptr,
                                beta != nullptr, has_depth_);
+  // Mean (1), variance (2), and (t - mean) * stddev_inv (1) = 4, + gamma/beta.
+  flops_ = shape.DimensionsProduct() *
+           (4 + (gamma != nullptr ? 1 : 0) + (beta != nullptr ? 1 : 0));
 }
 
 std::string MeanStdDevNormalization::GetNormalizationCode(
@@ -868,6 +871,8 @@ MeanStdDevNormalization CreateRMSNormalization(const OperationDef& definition,
       gpu_info, definition.dst_tensors[0].HasAxis(Axis::kBatch),
       shape.c % 4 == 0, norm.work_group_reduction_, norm.work_group_size_,
       norm.has_depth_);
+  // Square-accumulate reduction (2) + scale by rsqrt (1) = 3 FLOPs.
+  norm.flops_ = shape.DimensionsProduct() * 3;
   return norm;
 }
 
@@ -890,6 +895,8 @@ std::unique_ptr<GPUOperation> CreateStatisticalTopK(
       gpu_info, definition.dst_tensors[0].HasAxis(Axis::kBatch),
       shape.c % 4 == 0, norm.work_group_reduction_, norm.work_group_size_,
       norm.has_depth_);
+  // Mean (1), variance (2), and max(t, cutoff) - cutoff (1) = 4 FLOPs.
+  norm.flops_ = shape.DimensionsProduct() * 4;
   return std::make_unique<MeanStdDevNormalization>(std::move(norm));
 }
 
@@ -965,6 +972,8 @@ HWCGroupNormalization::HWCGroupNormalization(
     code_ = GetHWCNormalizationCode(gpu_info, definition, work_group_size_,
                                     group_size);
   }
+  // Mean (1), variance (2), normalize (1), and * gamma + beta (2) = 6 FLOPs.
+  flops_ = shape.DimensionsProduct() * 6;
 }
 
 int3 HWCGroupNormalization::GetGridSize() const {

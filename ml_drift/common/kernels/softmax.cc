@@ -316,6 +316,8 @@ Softmax::Softmax(const OperationDef& definition, const GpuInfo& gpu_info,
                       &c);
   code_ = c;
   tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_ZIs1;
+  // Reduce: max, sub, exp, sum = 4; full softmax adds sub, exp, mul (+3 = 7).
+  flops_ = shape.DimensionsProduct() * (reduce_only ? 4 : 7);
 }
 
 std::vector<int3> Softmax::GetPossibleKernelWorkGroups(
@@ -370,7 +372,10 @@ GPUOperation CreateSoftmaxFinal(const OperationDef& definition, int channels) {
 )";
   }
   op_desc.code += "  out_value = exp(in_value - exp_val.y) * exp_val.x;\n";
-  return CreateGpuOperation(definition, std::move(op_desc));
+  GPUOperation op = CreateGpuOperation(definition, std::move(op_desc));
+  // exp(in_value - max) * inv_sum: sub, exp, mul = 3 FLOPs.
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() * 3;
+  return op;
 }
 
 }  // namespace ml_drift

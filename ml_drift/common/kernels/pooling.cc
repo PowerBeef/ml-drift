@@ -275,6 +275,8 @@ GPUOperation CreatePooling(const OperationDef& definition,
         GetMaxPoolingKernelCode(definition, gpu_info, attr.output_indices, &op);
   }
   op.tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() *
+              attr.kernel.w * attr.kernel.h;
   return op;
 }
 
@@ -298,6 +300,8 @@ GPUOperation CreatePooling(const OperationDef& definition,
         GetMaxPoolingKernelCode(definition, gpu_info, attr.output_indices, &op);
   }
   op.tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() *
+              attr.kernel.w * attr.kernel.h * attr.kernel.d;
   return op;
 }
 

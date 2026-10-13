@@ -113,6 +113,7 @@ Cumsum CreateCumsum(const OperationDef& definition,
                     const CumsumAttributes& attr) {
   Cumsum op(attr.axis);
   op.GetCumsumCode(definition);
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct();
   return op;
 }
 

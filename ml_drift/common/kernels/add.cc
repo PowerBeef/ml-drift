@@ -70,6 +70,9 @@ GPUOperation CreateUnequalAdd(const OperationDef& op_def) {
   c += "  args.dst_tensor.Write(src, " + coords + ");\n";
   c += "} \n";
   op.code_ = std::move(c);
+  op.flops_ = op_def.dst_tensors[0].GetBHWDCShape().DimensionsProduct() *
+              (op_def.src_tensors.size() > 1 ? op_def.src_tensors.size() - 1
+                                             : 1);
   return op;
 }
 }  // namespace
@@ -96,7 +99,12 @@ GPUOperation CreateAdd(const OperationDef& definition,
         "  out_value += args." + tensor_name + ".Read(" + coords + ");\n";
     op_desc.code += "}\n";
   }
-  return CreateGpuOperation(definition, std::move(op_desc));
+  GPUOperation op = CreateGpuOperation(definition, std::move(op_desc));
+  op.flops_ =
+      definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() *
+      (definition.src_tensors.size() > 1 ? definition.src_tensors.size() - 1
+                                         : 1);
+  return op;
 }
 
 }  // namespace ml_drift

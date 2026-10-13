@@ -79,7 +79,11 @@ out_value = dequantized_value;)";
   }
   op_desc.code = absl::Substitute(op_code, in_out_type);
 
-  return CreateGpuOperation(definition, std::move(op_desc));
+  GPUOperation op = CreateGpuOperation(definition, std::move(op_desc));
+  // Quantize: min, max, sub, mul/div = 4; dequantize adds mul, add (+2 = 6).
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() *
+              (is_quantize_only ? 4 : 6);
+  return op;
 }
 
 GPUOperation CreateQuantizeAndDequantize(
@@ -706,8 +710,11 @@ std::unique_ptr<GPUOperation> CreateQuantization(const OperationDef& definition,
                                                  const GpuInfo& gpu_info,
                                                  const BHWC& shape,
                                                  bool calculate_sum) {
-  return std::make_unique<Quantization>(
+  auto op = std::make_unique<Quantization>(
       Quantization(definition, dst_type, gpu_info, shape, calculate_sum));
+  // Min/max reduction (2) + quantize scale/zero_point/clamp (3) = 5 FLOPs.
+  op->flops_ = shape.DimensionsProduct() * 5;
+  return op;
 }
 
 // Wzp == 0:
@@ -826,6 +833,9 @@ GPUOperation CreateDequantization(const OHWI& weights_shape,
   if (weights_zero_point) {
     op.AddSrcTensor("weights_zero_point", *weights_zero_point);
   }
+  // Scale mul + weights_sum FMA (~5 FLOPs); zero_point adds 2 FMAs (+4 = 9).
+  op.flops_ = dst.GetBHWDCShape().DimensionsProduct() *
+              (weights_zero_point != nullptr ? 9 : 5);
   return op;
 }
 

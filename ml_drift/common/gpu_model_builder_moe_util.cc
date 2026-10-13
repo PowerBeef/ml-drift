@@ -48,6 +48,7 @@ std::vector<GpuModelBuilder::TensorHandle> CreateExpertsRemap(
       BHWC(1, num_experts, indices_shape.w, 2), DataType::kInt32);
   auto experts_remap_op =
       CreateExpertsRemapOp(indices.tensor_desc, experts_remap.tensor_desc);
+  experts_remap_op->flops_ = indices_shape.DimensionsProduct();
 
   TensorDescriptor dst_count_desc = TensorDescriptor(
       DataType::kInt32, TensorStorageType::kBuffer, Layout::kHWC);
@@ -59,6 +60,7 @@ std::vector<GpuModelBuilder::TensorHandle> CreateExpertsRemap(
 
   auto experts_offsets = builder.AddTensor(dst_count_desc);
   auto experts_offsets_op = CreateOffsetsOp();
+  experts_offsets_op->flops_ = num_experts;
   builder.AddGpuOperation({experts_count}, {experts_offsets},
                           std::move(experts_offsets_op),
                           "create_experts_offsets");
@@ -69,6 +71,8 @@ std::vector<GpuModelBuilder::TensorHandle> CreateExpertsRemap(
       experts_remap.tensor_desc, experts_remap_packed.tensor_desc);
   experts_remap_packed_op->read_size_ =
       experts_remap_packed.tensor_desc.GetMemorySizeInBytes();
+  experts_remap_packed_op->flops_ =
+      experts_remap_packed.tensor_desc.GetBHWCShape().DimensionsProduct();
   builder.AddGpuOperation(
       {experts_remap, experts_count, experts_offsets}, {experts_remap_packed},
       std::move(experts_remap_packed_op), "linearize_experts_remap");

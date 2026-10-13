@@ -229,6 +229,8 @@ TopKOp CreateTopK(const GpuInfo& gpu_info, const OperationDef& op_def,
     op.compiler_options_.push_back(CompilerOptions::kClDisableOptimizations);
   }
   op.code_ = code;
+  op.flops_ =
+      op_def.src_tensors[0].GetBHWDCShape().DimensionsProduct() * kTopKSize;
 
   return op;
 }

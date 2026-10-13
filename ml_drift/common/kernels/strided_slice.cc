@@ -95,6 +95,9 @@ StridedSlice::StridedSlice(const OperationDef& definition,
   work_group_size_ = int3(8, 4, 1);
   code_ = GetStridedSliceCode(definition, Is4Aligned(attributes_));
   tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;
+  if (definition.dst_tensors[0].GetMemorySizeInBytes() > 0) {
+    read_size_ = definition.dst_tensors[0].GetMemorySizeInBytes();
+  }
 }
 
 StridedSlice::StridedSlice(const OperationDef& definition,
@@ -103,6 +106,9 @@ StridedSlice::StridedSlice(const OperationDef& definition,
   work_group_size_ = int3(8, 4, 1);
   code_ = GetStridedSliceCode(definition, Is4Aligned(attributes_));
   tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;
+  if (definition.dst_tensors[0].GetMemorySizeInBytes() > 0) {
+    read_size_ = definition.dst_tensors[0].GetMemorySizeInBytes();
+  }
 }
 
 StridedSlice::StridedSlice(StridedSlice&& operation)

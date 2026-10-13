@@ -99,6 +99,10 @@ GPUOperation CreateGather(const OperationDef& op_def,
   op.AddDstTensor("dst_tensor", op_def.dst_tensors[0]);
   op.code_ = GetGatherCode(op_def, attr.axis);
   op.tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;
+  if (op_def.dst_tensors[0].GetMemorySizeInBytes() > 0) {
+    op.read_size_ = op_def.dst_tensors[0].GetMemorySizeInBytes() +
+                    op_def.src_tensors[1].GetMemorySizeInBytes();
+  }
   return op;
 }
 

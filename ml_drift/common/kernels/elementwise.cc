@@ -712,6 +712,31 @@ absl::StatusOr<ElementwiseDescriptor> CreateElementwiseDesc(
       attr.param);
 }
 
+int GetElementwiseFlopsPerElement(OperationType op_type) {
+  switch (op_type) {
+    case OperationType::kCopy:
+      return 0;
+    case OperationType::kSquaredDiff:
+    case OperationType::kElu:
+    case OperationType::kFloorDiv:
+      return 2;
+    case OperationType::kFloorMod:
+    case OperationType::kSigmoid:
+      // FloorMod: div, floor, fma = 3; Sigmoid: exp, add, rcp = 3.
+      return 3;
+    case OperationType::kHardSwish:
+      // x * clamp(x / 6 + 0.5, 0, 1): fma, min, max, mul = 4.
+      return 4;
+    case OperationType::kGelu:
+    case OperationType::kGeluTanhApprox:
+    case OperationType::kMish:
+      // ~8 arithmetic and transcendental ops per element.
+      return 8;
+    default:
+      return 1;
+  }
+}
+
 }  // namespace
 
 ElementwiseDescriptor CreateElementwiseOneInput(const GpuInfo& gpu_info,
@@ -726,19 +751,25 @@ ElementwiseDescriptor CreateElementwiseOneInput(const GpuInfo& gpu_info,
 GPUOperation CreateElementwiseOneInput(const GpuInfo& gpu_info,
                                        const OperationDef& definition,
                                        const OperationType& op_type) {
-  return CreateGpuOperation(
+  GPUOperation op = CreateGpuOperation(
       definition,
       CreateElementwiseOneInput(gpu_info, op_type,
                                 definition.src_tensors[0].GetDataType()));
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() *
+              GetElementwiseFlopsPerElement(op_type);
+  return op;
 }
 
 GPUOperation CreateElementwiseOneInput(const GpuInfo& gpu_info,
                                        const TensorDescriptor& src,
                                        const TensorDescriptor& dst,
                                        const OperationType& op_type) {
-  return CreateGpuOperation(
+  GPUOperation op = CreateGpuOperation(
       src, dst,
       CreateElementwiseOneInput(gpu_info, op_type, src.GetDataType()));
+  op.flops_ = dst.GetBHWDCShape().DimensionsProduct() *
+              GetElementwiseFlopsPerElement(op_type);
+  return op;
 }
 
 GPUOperation CreateElementwise(const GpuInfo& gpu_info,
@@ -750,7 +781,10 @@ GPUOperation CreateElementwise(const GpuInfo& gpu_info,
     ABSL_LOG(ERROR) << result.status().message();
     return GPUOperation();
   } else {
-    return CreateGpuOperation(definition, std::move(result.value()));
+    GPUOperation op = CreateGpuOperation(definition, std::move(result.value()));
+    op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() *
+                GetElementwiseFlopsPerElement(op_type);
+    return op;
   }
 }
 
@@ -763,8 +797,11 @@ GPUOperation CreateElementwiseTwoInput(const GpuInfo& gpu_info,
   op_desc.code = GetTwoInputCode(
       gpu_info, op_type, definition.src_tensors[0].GetDataType(), "out_value",
       "in_value", "in2_value", false);
-  return CreateGpuOperation(definition, std::move(op_desc), second_shape,
-                            dst_shape);
+  GPUOperation op = CreateGpuOperation(definition, std::move(op_desc),
+                                       second_shape, dst_shape);
+  op.flops_ =
+      dst_shape.DimensionsProduct() * GetElementwiseFlopsPerElement(op_type);
+  return op;
 }
 
 namespace {
@@ -861,6 +898,8 @@ GPUOperation CreateElementwiseOneInputWithBroadcast(
                               definition.src_tensors[0].GetDataType(),
                               "first_value", "result");
   op.code_ = absl::Substitute(GetKernelBodyCode(definition), c);
+  op.flops_ =
+      output_shape.DimensionsProduct() * GetElementwiseFlopsPerElement(op_type);
   return op;
 }
 
@@ -894,6 +933,8 @@ GPUOperation CreateElementwiseWithBroadcast(const GpuInfo& gpu_info,
                                                  {"S_COORD", "S"},
                                                  {"B_COORD", "B"}});
   op.code_ = absl::Substitute(GetKernelBodyCode(definition), c);
+  op.flops_ =
+      output_shape.DimensionsProduct() * GetElementwiseFlopsPerElement(op_type);
   return op;
 }
 
@@ -921,6 +962,8 @@ GPUOperation CreateElementwiseTwoInputWithBroadcast(
                               "first_value", "second_value",
                               attr.runtime_tensor_is_second);
   op.code_ = absl::Substitute(GetKernelBodyCode(definition), c);
+  op.flops_ =
+      output_shape.DimensionsProduct() * GetElementwiseFlopsPerElement(op_type);
   return op;
 }
 

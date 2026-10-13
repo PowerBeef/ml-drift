@@ -33,7 +33,9 @@ GPUOperation CreateCast(const OperationDef& definition,
   }
   op_desc.code = "out_value = ucl::Convert<" + ToUclDataType(dst_type, 4) +
                  ">(in_value);\n";
-  return CreateGpuOperation(definition, std::move(op_desc));
+  GPUOperation op = CreateGpuOperation(definition, std::move(op_desc));
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct();
+  return op;
 }
 
 }  // namespace ml_drift

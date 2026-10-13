@@ -93,6 +93,8 @@ GPUOperation CreateResampler(const GpuInfo& gpu_info,
   op.AddDstTensor("dst_tensor", definition.dst_tensors[0]);
   op.code_ = GetResamplerCode(gpu_info, definition);
   op.tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_SToZ;
+  // 2D bilinear interpolation (3 mix() calls = 6 FLOPs) + coord frac (2) = 8.
+  op.flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() * 8;
   return op;
 }
 

@@ -675,37 +675,47 @@ std::vector<int3> Reduce::GetPossibleKernelWorkGroups(
 Reduce CreateReduce(const std::set<Axis>& axis_to_reduce, const BHWC& src_shape,
                     OperationType op_type, const OperationDef& definition,
                     const GpuInfo& gpu_info) {
-  return Reduce(GetSizesFromShape(axis_to_reduce, src_shape),
-                GetReduceTypeFromOperationType(op_type), definition, gpu_info);
+  return CreateReduce(axis_to_reduce, src_shape,
+                      GetReduceTypeFromOperationType(op_type), definition,
+                      gpu_info);
 }
 
 Reduce Create2InputReduce(const std::set<Axis>& axis_to_reduce,
                           const BHWC& src_shape, OperationType op_type,
                           const OperationDef& definition,
                           const GpuInfo& gpu_info) {
-  return Reduce(GetSizesFromShape(axis_to_reduce, src_shape),
-                GetReduceTypeFromOperationType(op_type), definition, gpu_info,
-                /*add_input*/ true);
+  Reduce op(GetSizesFromShape(axis_to_reduce, src_shape),
+            GetReduceTypeFromOperationType(op_type), definition, gpu_info,
+            /*add_input*/ true);
+  op.flops_ = src_shape.DimensionsProduct() * 2;
+  return op;
 }
 
 Reduce CreateReduce(const std::set<Axis>& axis_to_reduce, const BHWC& src_shape,
                     Reduce::Type reduce_type, const OperationDef& definition,
                     const GpuInfo& gpu_info) {
-  return Reduce(GetSizesFromShape(axis_to_reduce, src_shape), reduce_type,
-                definition, gpu_info);
+  Reduce op(GetSizesFromShape(axis_to_reduce, src_shape), reduce_type,
+            definition, gpu_info);
+  op.flops_ = src_shape.DimensionsProduct() *
+              (reduce_type == Reduce::Type::kMeanSquares ? 2 : 1);
+  return op;
 }
 
 Reduce CreateReduce(const std::set<Axis>& axis_to_reduce,
                     const BHWDC& src_shape, OperationType op_type,
                     const OperationDef& definition, const GpuInfo& gpu_info) {
-  return Reduce(GetSizesFromShape(axis_to_reduce, src_shape),
-                GetReduceTypeFromOperationType(op_type), definition, gpu_info);
+  return CreateReduce(axis_to_reduce, src_shape,
+                      GetReduceTypeFromOperationType(op_type), definition,
+                      gpu_info);
 }
 
 Reduce CreateReduce(const std::set<Axis>& axis_to_reduce,
                     const BHWDC& src_shape, Reduce::Type reduce_type,
                     const OperationDef& definition, const GpuInfo& gpu_info) {
-  return Reduce(GetSizesFromShape(axis_to_reduce, src_shape), reduce_type,
-                definition, gpu_info);
+  Reduce op(GetSizesFromShape(axis_to_reduce, src_shape), reduce_type,
+            definition, gpu_info);
+  op.flops_ = src_shape.DimensionsProduct() *
+              (reduce_type == Reduce::Type::kMeanSquares ? 2 : 1);
+  return op;
 }
 }  // namespace ml_drift

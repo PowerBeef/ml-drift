@@ -260,6 +260,9 @@ Winograd4x4To36 CreateWinograd4x4To36(const OperationDef& definition,
       "Bt", std::make_unique<BufferDescriptor>(std::move(buffer_desc)));
 
   desc.work_group_size_ = int3(8, 4, 1);
+  // Two 6x6 matrix multiplies (Bt * d * B): 2 passes * 6 FMAs * 2 = 24 FLOPs.
+  desc.flops_ =
+      definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() * 24;
   return desc;
 }
 
@@ -275,6 +278,9 @@ Winograd3x3TiledXForward::Winograd3x3TiledXForward(
     work_group_size_ = int3(8, tile_size_outer_, 1);
   }
   code_ = GetCode(definition, gpu_info);
+  // Two NxN matrix multiplies (Bt * d * B): 2 passes * N FMAs * 2 = 4*N FLOPs.
+  flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() * 4 *
+           tile_size_outer_;
   if (gpu_info.IsAdreno()) {
     compiler_options_.push_back(CompilerOptions::kAdrenoMoreWaves);
   }
@@ -625,6 +631,9 @@ Winograd36To4x4 CreateWinograd36To4x4(
       "At", std::make_unique<BufferDescriptor>(std::move(buffer_desc)));
 
   desc.work_group_size_ = int3(32, 1, 1);
+  // At (4x6) * M (6x6) * A (6x4): (36*4*2)/16 + 6*2 = 18 + 12 = 30 FLOPs/out.
+  desc.flops_ =
+      definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() * 30;
   return desc;
 }
 
@@ -638,6 +647,9 @@ Winograd3x3TiledXBackward::Winograd3x3TiledXBackward(
     compiler_options_.push_back(CompilerOptions::kClFastRelaxedMath);
   }
   code_ = GetCode(definition, gpu_info);
+  // Two 1D transform passes over tile_size_outer_: ~2 * 2 * N = 4*N FLOPs/out.
+  flops_ = definition.dst_tensors[0].GetBHWDCShape().DimensionsProduct() * 4 *
+           tile_size_outer_;
 }
 
 std::string Winograd3x3TiledXBackward::GetCode(const OperationDef& op_def,
@@ -870,6 +882,8 @@ Winograd3x3To36::Winograd3x3To36(const TensorDescriptor& src_desc,
   AddDstTensor("dst", dst_desc);
   AddTransformMatrix();
   work_group_size_ = int3(8, 4, 6);
+  // Two 1D 3-tap transform passes (G * g * Gt): 2 * 3 * 2 = 12 FLOPs.
+  flops_ = dst_desc.GetBHWDCShape().DimensionsProduct() * 12;
 }
 
 void Winograd3x3To36::AddTransformMatrix() {

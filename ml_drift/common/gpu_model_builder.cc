@@ -1078,6 +1078,17 @@ std::vector<GpuModelBuilder::TensorHandle> GpuModelBuilder::WeightsConversion(
   for (auto& dst : dsts) {
     gpu_node.outputs.push_back(dst.id);
   }
+  if (runtime_check.ring_size.has_value()) {
+    uint64_t read_size = weights.shape.DimensionsProduct() *
+                         SizeInBitsOf(external_weights.desc.type) / 8;
+    if (weights.scale) {
+      read_size += weights.scale->tensor_desc.GetMemorySizeInBytes();
+    }
+    if (weights.zero_point) {
+      read_size += weights.zero_point->tensor_desc.GetMemorySizeInBytes();
+    }
+    gpu_node.gpu_operation->read_size_ = read_size;
+  }
 
   return dsts;
 }
@@ -1574,6 +1585,26 @@ GpuModelBuilder::FullyConnectedInt8ExternalWeights(
     gpu_node.outputs = {dst.id};
     gpu_node.gpu_operation->flops_ =
         GetConvolutionFlops(dst_shape, weights.shape);
+    if (runtime_check.ring_size.has_value()) {
+      // ringed weights, not entire object read, manually calculate read size.
+      uint64_t read_size = 0;
+      read_size += src.tensor_desc.GetMemorySizeInBytes();
+      read_size += weights.shape.DimensionsProduct() *
+                   SizeInBitsOf(external_weights.desc.type) / 8;
+      if (weights.scale) {
+        read_size += weights.scale->tensor_desc.GetMemorySizeInBytes();
+      }
+      if (weights.zero_point) {
+        read_size += weights.zero_point->tensor_desc.GetMemorySizeInBytes();
+      }
+      if (biases) {
+        read_size += biases->tensor_desc.GetMemorySizeInBytes();
+      }
+      if (src_exp) {
+        read_size += src_exp->tensor_desc.GetMemorySizeInBytes();
+      }
+      gpu_node.gpu_operation->read_size_ = read_size;
+    }
     return dst;
   } else if (!grouped_quantization && weights.sum_i.has_value() &&
              SupportsConvolutionInt8(gpu_info_,
@@ -3311,6 +3342,7 @@ MAIN_FUNCTION($$0) {
   custom_op.AddDstTensor("output", dst.tensor_desc);
   custom_op.code_ = std::move(code);
   custom_op.tensor_to_grid_ = TensorToGrid::kWBToX_HDToY_ZIs1;
+  custom_op.flops_ = src_shape.DimensionsProduct() * 2;
 
   AddGpuOperation({src_logits, src_indices, probabilities, params_i32_handle},
                   {dst}, std::make_unique<GPUOperation>(std::move(custom_op)),
@@ -3850,11 +3882,13 @@ GpuModelBuilder::BatchedMatMulSoftmaxBatchedMatMulSingleKernel(
   conv_node.name = "matmul_softmax_matmul";
   {
     const int64_t conv0_flops_per_element = weights_0_shape.i * 2;
-    const int64_t conv0_dst_elements = width * batch_size * weights_0_shape.o;
+    const int64_t conv0_dst_elements =
+        static_cast<int64_t>(width) * batch_size * weights_0_shape.o;
     const int64_t conv0_flops_count =
         conv0_dst_elements * conv0_flops_per_element;
     const int64_t conv1_flops_per_element = weights_1_shape.i * 2;
-    const int64_t conv1_dst_elements = width * batch_size * weights_1_shape.o;
+    const int64_t conv1_dst_elements =
+        static_cast<int64_t>(width) * batch_size * weights_1_shape.o;
     const int64_t conv1_flops_count =
         conv1_dst_elements * conv1_flops_per_element;
     conv_node.gpu_operation->flops_ = conv0_flops_count + conv1_flops_count;
@@ -4043,6 +4077,8 @@ GPUOperation GpuModelBuilder::CreateNormalize(
     args.dst.Write(result, X, Y, S);
   })";
   op.code_ = std::move(c);
+  // (t - mean) * stddev_inv * gamma + beta: sub, mul, mul, add = 4 FLOPs.
+  op.flops_ = dst.tensor_desc.GetBHWDCShape().DimensionsProduct() * 4;
   return op;
 }
 
