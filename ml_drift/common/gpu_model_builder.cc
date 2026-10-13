@@ -1382,8 +1382,8 @@ GpuModelBuilder::FullyConnectedInt8QuantizedWithSrcQuantization(
   }
   gpu_node.outputs = {dst.id};
   gpu_node.gpu_operation = std::move(conv_int8);
-  gpu_node.gpu_operation->flops_ =
-      GetConvolutionFlops(dst_shape, weights.shape);
+  gpu_node.gpu_operation->flops_ +=
+      GetConvolutionFlops(dst_shape, weights.shape) / weights.shape.h;
   if (biases) {
     dst = Add(dst, *biases);
   }
@@ -1450,8 +1450,8 @@ GpuModelBuilder::FullyConnectedInt4QuantizedWithSrcQuantization(
   }
   gpu_node.outputs = {dst.id};
   gpu_node.gpu_operation = std::move(conv_int4);
-  gpu_node.gpu_operation->flops_ =
-      GetConvolutionFlops(dst_shape, weights.shape);
+  gpu_node.gpu_operation->flops_ +=
+      GetConvolutionFlops(dst_shape, weights.shape) / weights.shape.h;
   if (biases) {
     dst = Add(dst, *biases);
   }
@@ -1584,7 +1584,7 @@ GpuModelBuilder::FullyConnectedInt8ExternalWeights(
     }
     gpu_node.outputs = {dst.id};
     gpu_node.gpu_operation->flops_ =
-        GetConvolutionFlops(dst_shape, weights.shape);
+        GetConvolutionFlops(dst_shape, weights.shape) / weights.shape.h;
     if (runtime_check.ring_size.has_value()) {
       // ringed weights, not entire object read, manually calculate read size.
       uint64_t read_size = 0;
@@ -1674,7 +1674,7 @@ GpuModelBuilder::FullyConnectedInt4ExternalWeights(const TensorHandle& src,
     }
     gpu_node.outputs = {dst.id};
     gpu_node.gpu_operation->flops_ =
-        GetConvolutionFlops(dst_shape, weights.shape);
+        GetConvolutionFlops(dst_shape, weights.shape) / weights.shape.h;
   } else if (weights.sum_i.has_value() &&
              SupportsConvolutionInt4(gpu_info_,
                                      src.tensor_desc.GetBHWCShape()) &&
@@ -1747,7 +1747,7 @@ GpuModelBuilder::FullyConnectedInt2ExternalWeights(const TensorHandle& src,
     }
     gpu_node.outputs = {dst.id};
     gpu_node.gpu_operation->flops_ =
-        GetConvolutionFlops(dst_shape, weights.shape);
+        GetConvolutionFlops(dst_shape, weights.shape) / weights.shape.h;
     return dst;
   } else if (weights.sum_i.has_value() &&
              SupportsConvolutionInt4(gpu_info_,
@@ -2077,7 +2077,8 @@ GpuModelBuilder::TensorHandle GpuModelBuilder::FullyConnected(
     }
     op_name = "fully_connected";
   }
-  op->flops_ = GetConvolutionFlops(dst_shape, attr.weights.shape);
+  op->flops_ =
+      GetConvolutionFlops(dst_shape, attr.weights.shape) / attr.weights.shape.h;
   std::vector<ValueId> input_ids = {src.id};
   const auto weights_handles = GetWeights(attr.weights, weights_desc);
   for (const auto& weight : weights_handles) {
@@ -2201,7 +2202,8 @@ GpuModelBuilder::TensorHandle GpuModelBuilder::FullyConnected(
           std::make_unique<ml_drift::FullyConnected>(std::move(fc.value()));
     }
     gpu_node.gpu_operation->flops_ =
-        GetConvolutionFlops(dst_shape, attr.weights.shape);
+        GetConvolutionFlops(dst_shape, attr.weights.shape) /
+        attr.weights.shape.h;
     return dst;
   }
 
@@ -3886,12 +3888,15 @@ GpuModelBuilder::BatchedMatMulSoftmaxBatchedMatMulSingleKernel(
         static_cast<int64_t>(width) * batch_size * weights_0_shape.o;
     const int64_t conv0_flops_count =
         conv0_dst_elements * conv0_flops_per_element;
+    // Softmax: max, sub, exp, sum (reduce = 4) + sub, exp, mul (final = 3) = 7.
+    const int64_t softmax_flops_count = conv0_dst_elements * 7;
     const int64_t conv1_flops_per_element = weights_1_shape.i * 2;
     const int64_t conv1_dst_elements =
         static_cast<int64_t>(width) * batch_size * weights_1_shape.o;
     const int64_t conv1_flops_count =
         conv1_dst_elements * conv1_flops_per_element;
-    conv_node.gpu_operation->flops_ = conv0_flops_count + conv1_flops_count;
+    conv_node.gpu_operation->flops_ =
+        conv0_flops_count + softmax_flops_count + conv1_flops_count;
   }
   return dst;
 }
