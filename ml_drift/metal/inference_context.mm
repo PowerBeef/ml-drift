@@ -45,6 +45,7 @@
 #include "ml_drift/metal/environment.h"
 #include "ml_drift/metal/inference_context_generated.h"
 #include "ml_drift/metal/metal_spatial_tensor.h"
+#import "agello/agello_telemetry_metal.h"  // from @agello_telemetry
 
 namespace ml_drift {
 namespace metal {
@@ -607,6 +608,7 @@ void InferenceContext::EncodeWithCommandQueue(id<MTLCommandQueue> command_queue,
         num_tasks++;
       }
       [encoder endEncoding];
+      ::agello::telemetry::AttachGpuTiming(command_buffer);
       [command_buffer commit];
     }
   }

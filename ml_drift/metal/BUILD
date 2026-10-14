@@ -160,6 +160,7 @@ objc_library(
     hdrs = ["inference_context.h"],
     features = ["-layering_check"],
     deps = [
+        "@agello_telemetry//:metal",
         ":common",
         ":compute_task",
         ":environment",
