@@ -107,6 +107,10 @@ class ComputeTask {
                     const std::map<std::string, std::string>& defines);
   absl::Status RestoreDeserialized(Environment* env);
 
+  // The node's name, given to its pipeline so Instruments and GPU captures can tell kernels
+  // apart (every kernel's function is ComputeFunction). Set before compiling (Agello).
+  void SetLabel(const std::string& label) { label_ = label; }
+
  private:
   void UpdateArgumentBuffer();
 
@@ -126,6 +130,8 @@ class ComputeTask {
 
   // for serialization
   std::map<std::string, std::string> defines_;
+
+  std::string label_;
 };
 
 }  // namespace metal

@@ -46,6 +46,10 @@
 #include "ml_drift/metal/inference_context_generated.h"
 #include "ml_drift/metal/metal_spatial_tensor.h"
 #import "agello/agello_telemetry_metal.h"  // from @agello_telemetry
+#include "agello/agello_telemetry.h"  // from @agello_telemetry
+
+#include <chrono>
+#include <unistd.h>
 
 namespace ml_drift {
 namespace metal {
@@ -109,6 +113,7 @@ void InferenceContext::CopyFromGpuModel(GpuModel* gpu_model,
     nodes_[i].inputs = gpu_model->nodes[i].inputs;
     nodes_[i].outputs = gpu_model->nodes[i].outputs;
     nodes_[i].name = gpu_model->nodes[i].name;
+    nodes_[i].task.SetLabel(gpu_model->nodes[i].name);
     nodes_[i].optional_tag = gpu_model->nodes[i].optional_tag;
   }
 }
@@ -563,8 +568,128 @@ void InferenceContext::AddExternalMutableToResidencySet(id<MTLResidencySet> resi
   memory_manager_.AddExternalMutableToResidencySet(residency_set);
 }
 
+namespace {
+
+namespace telemetry = ::agello::telemetry;
+
+// Kernels grouped by the first op of a fused chain ("fully_connected -> add" counts as
+// "fully_connected +fused"), which keeps the number of names bounded.
+std::string KernelKey(const std::string& name) {
+  const size_t arrow = name.find(" -> ");
+  return arrow == std::string::npos ? name : name.substr(0, arrow) + " +fused";
+}
+
+int RunIndex(int run) {
+  switch (run) {
+    case telemetry::kGpuPrefill:
+      return 0;
+    case telemetry::kGpuDecode:
+      return 1;
+    case telemetry::kGpuVerify:
+      return 2;
+    case telemetry::kGpuDrafter:
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+constexpr const char* kRunNames[] = {"prefill", "decode", "verify", "drafter", "other"};
+
+// Nanoseconds per GPU timestamp tick: GPU timestamps 5 ms apart against a steady clock (the CPU
+// value sampleTimestamps returns is in nanoseconds on some devices, mach ticks on others).
+double NsPerGpuTick(id<MTLDevice> device) {
+  static const double scale = [device] {
+    MTLTimestamp cpu1 = 0, gpu1 = 0, cpu2 = 0, gpu2 = 0;
+    const auto start = std::chrono::steady_clock::now();
+    [device sampleTimestamps:&cpu1 gpuTimestamp:&gpu1];
+    usleep(5000);
+    [device sampleTimestamps:&cpu2 gpuTimestamp:&gpu2];
+    const auto end = std::chrono::steady_clock::now();
+    if (gpu2 <= gpu1) return 1.0;
+    const double wall_ns = std::chrono::duration<double, std::nano>(end - start).count();
+    return wall_ns / static_cast<double>(gpu2 - gpu1);
+  }();
+  return scale;
+}
+
+id<MTLCounterSet> TimestampCounterSet(id<MTLDevice> device) {
+  if (![device supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary]) return nil;
+  for (id<MTLCounterSet> set in device.counterSets) {
+    if ([set.name isEqualToString:MTLCommonCounterSetTimestamp]) return set;
+  }
+  return nil;
+}
+
+}  // namespace
+
+NSString* InferenceContext::DebugLabel(MetalNode& node) {
+  if (node.debug_label == nil) node.debug_label = [NSString stringWithUTF8String:node.name.c_str()];
+  return node.debug_label;
+}
+
+void InferenceContext::EncodeTimed(id<MTLCommandBuffer> command_buffer, int* node_index,
+                                   int max_tasks) {
+  id<MTLDevice> device = command_buffer.device;
+  id<MTLCounterSet> timestamps = TimestampCounterSet(device);
+  id<MTLCounterSampleBuffer> samples = nil;
+  if (timestamps != nil) {
+    MTLCounterSampleBufferDescriptor* descriptor = [[MTLCounterSampleBufferDescriptor alloc] init];
+    descriptor.counterSet = timestamps;
+    descriptor.storageMode = MTLStorageModeShared;
+    descriptor.sampleCount = 2 * max_tasks;
+    samples = [device newCounterSampleBufferWithDescriptor:descriptor error:nil];
+  }
+  const int run = RunIndex(telemetry::CurrentRun());
+  std::vector<int> spans;
+  spans.reserve(max_tasks);
+  while (static_cast<int>(spans.size()) < max_tasks && *node_index < nodes_.size()) {
+    auto& node = nodes_[(*node_index)++];
+    if (absl::c_any_of(node.optional_tag,
+                       [&](int t) { return !enabled_tags_.contains(t); })) {
+      continue;
+    }
+    if (node.kernel_spans[run] == -2) {
+      const std::string name =
+          std::string("gpu.k.") + kRunNames[run] + ":" + KernelKey(node.name);
+      node.kernel_spans[run] = telemetry::InternSpan(name.c_str());
+    }
+    const int k = static_cast<int>(spans.size());
+    spans.push_back(node.kernel_spans[run]);
+    MTLComputePassDescriptor* pass = [MTLComputePassDescriptor computePassDescriptor];
+    if (samples != nil) {
+      pass.sampleBufferAttachments[0].sampleBuffer = samples;
+      pass.sampleBufferAttachments[0].startOfEncoderSampleIndex = 2 * k;
+      pass.sampleBufferAttachments[0].endOfEncoderSampleIndex = 2 * k + 1;
+    }
+    id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoderWithDescriptor:pass];
+    encoder.label = DebugLabel(node);
+    node.task.Encode(encoder);
+    [encoder endEncoding];
+  }
+  if (samples == nil || spans.empty()) return;
+  const double ns_per_tick = NsPerGpuTick(device);
+  [command_buffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+    NSData* data = [samples resolveCounterRange:NSMakeRange(0, 2 * spans.size())];
+    if (data == nil) return;
+    const auto* results = static_cast<const MTLCounterResultTimestamp*>(data.bytes);
+    for (size_t k = 0; k < spans.size(); ++k) {
+      const uint64_t start = results[2 * k].timestamp;
+      const uint64_t end = results[2 * k + 1].timestamp;
+      if (start == MTLCounterErrorValue || end == MTLCounterErrorValue || end < start) continue;
+      telemetry::RecordNs(spans[k], static_cast<int64_t>((end - start) * ns_per_tick));
+    }
+  }];
+}
+
 void InferenceContext::EncodeWithCommandBuffer(
     id<MTLCommandBuffer> command_buffer, int tasks_per_encoder) {
+  if (telemetry::GetLevel() >= telemetry::kDeep) {
+    int index = 0;
+    EncodeTimed(command_buffer, &index, static_cast<int>(nodes_.size()));
+    return;
+  }
+  const bool debug_groups = telemetry::GetLevel() >= telemetry::kTrace;
   const int encoders_count = DivideRoundUp(nodes_.size(), tasks_per_encoder);
   int node_index = 0;
   for (int i = 0; i < encoders_count; ++i) {
@@ -579,7 +704,9 @@ void InferenceContext::EncodeWithCommandBuffer(
           continue;
         }
         auto& task = node.task;
+        if (debug_groups) [encoder pushDebugGroup:DebugLabel(node)];
         task.Encode(encoder);
+        if (debug_groups) [encoder popDebugGroup];
         num_tasks++;
       }
       [encoder endEncoding];
@@ -590,10 +717,18 @@ void InferenceContext::EncodeWithCommandBuffer(
 void InferenceContext::EncodeWithCommandQueue(id<MTLCommandQueue> command_queue,
                                               int flush_period) {
   const int cb_count = DivideRoundUp(nodes_.size(), flush_period);
+  const int level = telemetry::GetLevel();
+  const bool debug_groups = level >= telemetry::kTrace;
   int node_index = 0;
   for (int i = 0; i < cb_count; ++i) {
     @autoreleasepool {
       id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
+      if (level >= telemetry::kDeep) {
+        EncodeTimed(command_buffer, &node_index, flush_period);
+        ::agello::telemetry::AttachGpuTiming(command_buffer);
+        [command_buffer commit];
+        continue;
+      }
       id<MTLComputeCommandEncoder> encoder =
           [command_buffer computeCommandEncoder];
       int num_tasks = 0;
@@ -604,7 +739,9 @@ void InferenceContext::EncodeWithCommandQueue(id<MTLCommandQueue> command_queue,
           continue;
         }
         auto& task = node.task;
+        if (debug_groups) [encoder pushDebugGroup:DebugLabel(node)];
         task.Encode(encoder);
+        if (debug_groups) [encoder popDebugGroup];
         num_tasks++;
       }
       [encoder endEncoding];

@@ -274,12 +274,22 @@ MTLLanguageVersion GetMaxSupportedMTLLanguageVersion(id<MTLDevice> device) {
 absl::Status CreateComputeProgram(id<MTLDevice> device, const std::string& code,
                                   const std::string& function_name,
                                   const std::map<std::string, std::string>& macros,
-                                  id<MTLComputePipelineState>* program) {
+                                  id<MTLComputePipelineState>* program, const std::string& label) {
   id<MTLFunction> function;
   ABSL_RETURN_IF_ERROR(CreateFunction(device, code, function_name, macros, &function));
 
   NSError* error = nil;
-  *program = [device newComputePipelineStateWithFunction:function error:&error];
+  if (!label.empty()) {
+    MTLComputePipelineDescriptor* pipeline_desc = [[MTLComputePipelineDescriptor alloc] init];
+    pipeline_desc.computeFunction = function;
+    pipeline_desc.label = [NSString stringWithUTF8String:label.c_str()];
+    *program = [device newComputePipelineStateWithDescriptor:pipeline_desc
+                                                     options:MTLPipelineOptionNone
+                                                  reflection:nullptr
+                                                       error:&error];
+  } else {
+    *program = [device newComputePipelineStateWithFunction:function error:&error];
+  }
   if (!*program) {
     NSString* errorString =
         [NSString stringWithFormat:@"newComputePipelineStateWithFunction error: %@",
@@ -292,7 +302,7 @@ absl::Status CreateComputeProgram(id<MTLDevice> device, const std::string& code,
 absl::Status CreateComputeProgramWithArgumentBuffer(
     id<MTLDevice> device, const std::string& code, const std::string& function_name,
     const std::map<std::string, std::string>& macros, id<MTLComputePipelineState>* program,
-    id<MTLArgumentEncoder>* arguments_encoder) {
+    id<MTLArgumentEncoder>* arguments_encoder, const std::string& label) {
   if (@available(macOS 10.13, iOS 11.0, tvOS 11.0, *)) {
     id<MTLFunction> function;
     ABSL_RETURN_IF_ERROR(CreateFunction(device, code, "ComputeFunction", macros, &function));
@@ -302,6 +312,7 @@ absl::Status CreateComputeProgramWithArgumentBuffer(
     }
     MTLComputePipelineDescriptor* pipeline_desc = [[MTLComputePipelineDescriptor alloc] init];
     pipeline_desc.computeFunction = function;
+    if (!label.empty()) pipeline_desc.label = [NSString stringWithUTF8String:label.c_str()];
     NSError* error = nil;
     *program = [device newComputePipelineStateWithDescriptor:pipeline_desc
                                                      options:MTLPipelineOptionNone
@@ -324,7 +335,8 @@ absl::Status CreateComputeProgramWithICBSupport(id<MTLDevice> device, const std:
                                                 const std::string& function_name,
                                                 const std::map<std::string, std::string>& macros,
                                                 id<MTLComputePipelineState>* program,
-                                                id<MTLArgumentEncoder>* arguments_encoder) {
+                                                id<MTLArgumentEncoder>* arguments_encoder,
+                                                const std::string& label) {
   if (@available(macOS 11.00, iOS 13.0, tvOS 13.0, *)) {
     id<MTLFunction> function;
     ABSL_RETURN_IF_ERROR(CreateFunction(device, code, "ComputeFunction", macros, &function));
@@ -335,6 +347,7 @@ absl::Status CreateComputeProgramWithICBSupport(id<MTLDevice> device, const std:
     MTLComputePipelineDescriptor* pipeline_desc = [[MTLComputePipelineDescriptor alloc] init];
     pipeline_desc.computeFunction = function;
     pipeline_desc.supportIndirectCommandBuffers = TRUE;
+    if (!label.empty()) pipeline_desc.label = [NSString stringWithUTF8String:label.c_str()];
     NSError* error = nil;
     *program = [device newComputePipelineStateWithDescriptor:pipeline_desc
                                                      options:MTLPipelineOptionNone

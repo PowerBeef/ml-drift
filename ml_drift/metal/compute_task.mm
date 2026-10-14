@@ -170,11 +170,13 @@ absl::Status ComputeTask::CompileProgram(
     if (use_arguments_buffer_) {
       id<MTLArgumentEncoder> arguments_encoder;
       if (need_icb_support_) {
-        ABSL_RETURN_IF_ERROR(CreateComputeProgramWithICBSupport(
-            env->device(), code, "ComputeFunction", defines, &program, &arguments_encoder));
+        ABSL_RETURN_IF_ERROR(CreateComputeProgramWithICBSupport(env->device(), code,
+                                                                "ComputeFunction", defines,
+                                                                &program, &arguments_encoder, label_));
       } else {
         ABSL_RETURN_IF_ERROR(CreateComputeProgramWithArgumentBuffer(
-            env->device(), code, "ComputeFunction", defines, &program, &arguments_encoder));
+            env->device(), code, "ComputeFunction", defines, &program, &arguments_encoder,
+            label_));
       }
       arguments_encoder_ = arguments_encoder;
       arg_buffer_ =
@@ -184,8 +186,8 @@ absl::Status ComputeTask::CompileProgram(
         return absl::InternalError("Failed to create MTLBuffer.");
       }
     } else {
-      ABSL_RETURN_IF_ERROR(
-          CreateComputeProgram(env->device(), code, "ComputeFunction", defines, &program));
+      ABSL_RETURN_IF_ERROR(CreateComputeProgram(env->device(), code, "ComputeFunction", defines,
+                                                &program, label_));
     }
     program_ = program;
   }

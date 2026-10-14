@@ -30,18 +30,19 @@ namespace metal {
 MetalLanguageVersion ToMetalLanguageVersion(MTLLanguageVersion version);
 MTLLanguageVersion GetMaxSupportedMTLLanguageVersion(id<MTLDevice> device);
 
+// `label` names the pipeline in Instruments and GPU captures (Agello).
 absl::Status CreateComputeProgram(
     id<MTLDevice> device, const std::string& code,
     const std::string& function_name,
     const std::map<std::string, std::string>& macros,
-    id<MTLComputePipelineState>* program);
+    id<MTLComputePipelineState>* program, const std::string& label = "");
 
 absl::Status CreateComputeProgramWithArgumentBuffer(
     id<MTLDevice> device, const std::string& code,
     const std::string& function_name,
     const std::map<std::string, std::string>& macros,
     id<MTLComputePipelineState>* program,
-    id<MTLArgumentEncoder>* arguments_encoder);
+    id<MTLArgumentEncoder>* arguments_encoder, const std::string& label = "");
 
 // ICB - indirect command buffer
 absl::Status CreateComputeProgramWithICBSupport(
@@ -49,7 +50,7 @@ absl::Status CreateComputeProgramWithICBSupport(
     const std::string& function_name,
     const std::map<std::string, std::string>& macros,
     id<MTLComputePipelineState>* program,
-    id<MTLArgumentEncoder>* arguments_encoder);
+    id<MTLArgumentEncoder>* arguments_encoder, const std::string& label = "");
 
 int PixelFormatToSizeInBytes(MTLPixelFormat pixel_format);
 MTLPixelFormat DataTypeToPixelFormat(DataType type, int channels_count = 4,

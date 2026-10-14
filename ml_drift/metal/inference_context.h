@@ -53,6 +53,11 @@ struct MetalNode {
   // Mostly for debug purposes.
   std::string name;
 
+  // Agello telemetry: the name for GPU debug groups, and the per-kernel span ids per model run
+  // kind (prefill, decode, verify, drafter, other), interned on first use.
+  NSString* debug_label = nil;
+  int kernel_spans[5] = {-2, -2, -2, -2, -2};
+
   absl::flat_hash_set<int> optional_tag;
 
   MetalNode() = default;
@@ -152,6 +157,12 @@ class InferenceContext {
   void EnableOptionalNodes(absl::flat_hash_set<int> tags);
 
  private:
+  // Agello telemetry level 4: encodes nodes from *node_index, one encoder each with
+  // stage-boundary GPU timestamps, until max_tasks have been encoded or the graph ends, and
+  // records each kernel's GPU time when the command buffer completes.
+  void EncodeTimed(id<MTLCommandBuffer> command_buffer, int* node_index, int max_tasks);
+  NSString* DebugLabel(MetalNode& node);
+
   flatbuffers::Offset<data::InferenceContext> Encode(
       Environment* env,
       flatbuffers::Offset<ml_drift::data::GpuModel> gpu_model_fb,
