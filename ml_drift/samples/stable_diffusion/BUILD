@@ -351,7 +351,7 @@ cc_library(
     visibility = [
         "//research/aimatter/diffusion/klgan:__subpackages__",
         "//wireless/android/camera/diffusion/inference:__subpackages__",
-        "@//ml_drift_delegate/tflite:__subpackages__",
+        "@litert//ml_drift_delegate/tflite:__subpackages__",
     ],
     deps = [
         ":util",

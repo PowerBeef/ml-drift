@@ -22,10 +22,10 @@ package(
 cc_library(
     name = "custom_parsers",
     srcs = ["custom_parsers.cc"],
-    hdrs = ["@//ml_drift_delegate/tflite:custom_parsers.h"],
+    hdrs = ["@litert//ml_drift_delegate/tflite:custom_parsers.h"],
     deps = [
-        "@//ml_drift_delegate/tflite:operation_parser",
-        "@//ml_drift_delegate/tflite:unimplemented_operation_parser",
+        "@litert//ml_drift_delegate/tflite:operation_parser",
+        "@litert//ml_drift_delegate/tflite:unimplemented_operation_parser",
         "@com_google_absl//absl/strings",
     ],
 )

@@ -199,7 +199,7 @@ flatbuffer_cc_library(
     srcs = ["gl_inference_context.fbs"],
     flatc_args = [
         "--scoped-enums",
-        "-I .",
+        "-I .", "-I external/ml_drift",
     ],
     includes = [
         "//ml_drift/common:gpu_model_cc_fbs_includes",
