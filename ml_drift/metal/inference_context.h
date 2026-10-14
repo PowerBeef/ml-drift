@@ -162,6 +162,9 @@ class InferenceContext {
   // records each kernel's GPU time when the command buffer completes.
   void EncodeTimed(id<MTLCommandBuffer> command_buffer, int* node_index, int max_tasks);
   NSString* DebugLabel(MetalNode& node);
+  // Agello telemetry: AGELLO_TELEMETRY_GRAPH_DIR=<dir> writes the initialized GPU graph (kernels,
+  // work groups, FLOPs, tensor shapes) there as JSON; `origin` is "built" or "restored".
+  void DumpGraphForTelemetry(const char* origin);
 
   flatbuffers::Offset<data::InferenceContext> Encode(
       Environment* env,

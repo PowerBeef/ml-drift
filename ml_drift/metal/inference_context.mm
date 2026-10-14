@@ -14,8 +14,13 @@
 
 #include "ml_drift/metal/inference_context.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -48,7 +53,11 @@
 #import "agello/agello_telemetry_metal.h"  // from @agello_telemetry
 #include "agello/agello_telemetry.h"  // from @agello_telemetry
 
+#include <atomic>
 #include <chrono>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <unistd.h>
 
 namespace ml_drift {
@@ -189,6 +198,7 @@ absl::Status InferenceContext::InitFromGpuModel(
       }
     }
   }
+  DumpGraphForTelemetry("built");
   return absl::OkStatus();
 }
 
@@ -232,6 +242,7 @@ absl::Status InferenceContext::RestoreDeserialized(
   for (auto& external_tensor : create_info_ref.external_mutable_tensors) {
     ABSL_RETURN_IF_ERROR(memory_manager_.SetExternalTensor(GetKey(external_tensor.first), nullptr));
   }
+  DumpGraphForTelemetry("restored");
   return absl::OkStatus();
 }
 
@@ -622,6 +633,45 @@ id<MTLCounterSet> TimestampCounterSet(id<MTLDevice> device) {
 }
 
 }  // namespace
+
+void InferenceContext::DumpGraphForTelemetry(const char* origin) {
+  const char* dir = std::getenv("AGELLO_TELEMETRY_GRAPH_DIR");
+  if (dir == nullptr || *dir == '\0') return;
+  static std::atomic<int> sequence{0};
+  const std::string path = std::string(dir) + "/gpu-graph-" + std::to_string(sequence++) + "-" +
+                           std::to_string(nodes_.size()) + "-nodes.json";
+  auto shape = [this](ValueId id) {
+    MetalSpatialTensor* tensor = GetTensor(id);
+    if (tensor == nullptr) return std::string("null");
+    const BHWDC s = tensor->GetDescriptor().GetBHWDCShape();
+    return "[" + std::to_string(s.b) + "," + std::to_string(s.h) + "," + std::to_string(s.w) +
+           "," + std::to_string(s.d) + "," + std::to_string(s.c) + "]";
+  };
+  std::string out = std::string("{\"origin\":\"") + origin +
+                    "\",\"shape_order\":\"bhwdc\",\"kernels\":[";
+  for (size_t i = 0; i < nodes_.size(); ++i) {
+    const MetalNode& node = nodes_[i];
+    std::string name;
+    for (char c : node.name) {
+      if (c == '"' || c == '\\') name.push_back('\\');
+      name.push_back(c);
+    }
+    const int3 wg = node.task.GetWorkGroupSize();
+    out += (i ? ",\n" : "\n") + std::string("{\"i\":") + std::to_string(i) + ",\"name\":\"" +
+           name + "\",\"wg\":[" + std::to_string(wg.x) + "," + std::to_string(wg.y) + "," +
+           std::to_string(wg.z) + "],\"flops\":" + std::to_string(node.task.GetFlopsCount()) +
+           ",\"inputs\":[";
+    for (size_t k = 0; k < node.inputs.size(); ++k) out += (k ? "," : "") + shape(node.inputs[k]);
+    out += "],\"outputs\":[";
+    for (size_t k = 0; k < node.outputs.size(); ++k) out += (k ? "," : "") + shape(node.outputs[k]);
+    out += "]}";
+  }
+  out += "\n]}\n";
+  if (FILE* file = std::fopen(path.c_str(), "w")) {
+    std::fwrite(out.data(), 1, out.size(), file);
+    std::fclose(file);
+  }
+}
 
 NSString* InferenceContext::DebugLabel(MetalNode& node) {
   if (node.debug_label == nil) node.debug_label = [NSString stringWithUTF8String:node.name.c_str()];
