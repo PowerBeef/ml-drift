@@ -93,6 +93,27 @@ inline bool UseBufferForIntWeights(const GpuInfo& gpu_info, int int_bit_size,
   return !(can_use_textures && is_textures_recommended);
 }
 
+// Rebalances initial (x_size, y_size) workgroup dimensions by trading factors
+// of 2 within wg_total_size to respect input reduction bounds (max_y_size),
+// output slice bounds (dst_slices), and compute unit occupancy (cu_count).
+// Intended to be called as the final step of GetWorkGroupSize after selecting
+// device-specific initial dimensions.
+int3 RebalanceWorkGroupSize(int x_size, int y_size, int wg_total_size,
+                            int max_y_size, int dst_slices, int total_task_size,
+                            int cu_count) {
+  while (y_size > max_y_size && y_size > 1 && x_size < dst_slices) {
+    y_size /= 2;
+    x_size *= 2;
+  }
+  while ((x_size > dst_slices ||
+          (total_task_size / x_size < cu_count && y_size * 2 <= max_y_size)) &&
+         x_size > 1 && y_size * 2 <= wg_total_size) {
+    x_size /= 2;
+    y_size *= 2;
+  }
+  return int3(x_size, y_size, 1);
+}
+
 int3 GetWorkGroupSize(const FullyConnected::ConvParams& params,
                       const GpuInfo& gpu_info, const OHWI& weights_shape) {
   const bool is_quantized = fc::IsQuantized(params.weights_type);
@@ -143,18 +164,8 @@ int3 GetWorkGroupSize(const FullyConnected::ConvParams& params,
     int wg_total_size = cu_count >= 16 ? 256 : 128;
     y_size = std::min(y_size, wg_total_size);
     x_size = wg_total_size / y_size;
-    while (y_size > max_y_size && y_size > 1 && x_size < dst_slices) {
-      y_size /= 2;
-      x_size *= 2;
-    }
-    while ((x_size > dst_slices ||
-            (total_task_size / x_size < cu_count &&
-             y_size * 2 <= max_y_size)) &&
-           x_size > 1 && y_size * 2 <= wg_total_size) {
-      x_size /= 2;
-      y_size *= 2;
-    }
-    return int3(x_size, y_size, 1);
+    return RebalanceWorkGroupSize(x_size, y_size, wg_total_size, max_y_size,
+                                  dst_slices, total_task_size, cu_count);
   }
   if (gpu_info.IsIntel() && gpu_info.IsApiOpenCl()) {
     const int cu_count = gpu_info.GetComputeUnitsCount();
@@ -183,87 +194,60 @@ int3 GetWorkGroupSize(const FullyConnected::ConvParams& params,
     int wg_total_size = cu_count >= 64 ? 256 : 128;
     y_size = std::min(y_size, wg_total_size);
     x_size = wg_total_size / y_size;
-    while (y_size > max_y_size && y_size > 1 && x_size < dst_slices) {
-      y_size /= 2;
-      x_size *= 2;
-    }
-    while ((x_size > dst_slices ||
-            (total_task_size / x_size < cu_count &&
-             y_size * 2 <= max_y_size)) &&
-           x_size > 1 && y_size * 2 <= wg_total_size) {
-      x_size /= 2;
-      y_size *= 2;
-    }
-    return int3(x_size, y_size, 1);
+    return RebalanceWorkGroupSize(x_size, y_size, wg_total_size, max_y_size,
+                                  dst_slices, total_task_size, cu_count);
   }
   const int block_spatial =
       params.block_size.b * params.block_size.w * params.block_size.h;
   int wg_total_size = 32;
   float y_size_multiplier = 1;
-  if (gpu_info.IsMali()) {
-    if (gpu_info.mali_info.gpu_version == MaliGpu::kG925) {
+  if (gpu_info.IsMobileGpu()) {
+    // Default mobile baseline: 64 work items per work group.
+    wg_total_size = 64;
+    if (gpu_info.IsMali() && gpu_info.mali_info.gpu_version == MaliGpu::kG925) {
       wg_total_size = 128;
       y_size_multiplier = 2;
-    } else {
+    } else if (gpu_info.IsPowerVR()) {
+      wg_total_size = 128;
+    } else if (gpu_info.IsApple()) {
+      const int cu_count = gpu_info.GetComputeUnitsCount();
+      if (cu_count >= 24) {
+        wg_total_size = 256;
+        y_size_multiplier = 4;
+      } else if (cu_count >= 12) {
+        wg_total_size = 128;
+        y_size_multiplier = 2;
+      }
+    } else if (gpu_info.IsAdreno()) {
+      if (!gpu_info.adreno_info.IsAdreno3xx() &&
+          !gpu_info.adreno_info.IsAdreno4xx() &&
+          !gpu_info.adreno_info.IsAdreno5xx()) {
+        wg_total_size = 128;
+      }
+      if (is_quantized &&
+          gpu_info.adreno_info.generation >= AdrenoInfo::Generation::kGen7) {
+        wg_total_size = 256;
+      }
+      if (gpu_info.adreno_info.IsLowEnd()) {
+        wg_total_size = std::min(wg_total_size, 32);
+      }
+    }
+  } else if (gpu_info.IsDesktopGpu()) {
+    // Default desktop baseline: 128 work items per work group.
+    wg_total_size = 128;
+    const int cu_count = gpu_info.GetComputeUnitsCount();
+    if (gpu_info.IsApple() && cu_count < 12) {
       wg_total_size = 64;
     }
-  }
-  if (gpu_info.IsPowerVR()) {
-    wg_total_size = 128;
-  }
-  if (gpu_info.IsApple()) {
-    const int cu_count = gpu_info.GetComputeUnitsCount();
-    if (cu_count >= 24) {
-      wg_total_size = 256;
+    if (gpu_info.IsIntel()) {
+      y_size_multiplier = block_spatial > 1 ? 2 : 4;
+    } else if (cu_count >= (gpu_info.IsApple() ? 24 : 32)) {
+      if (!gpu_info.IsAMD()) {
+        wg_total_size = 256;
+      }
       y_size_multiplier = 4;
-    } else if (cu_count >= 12) {
-      wg_total_size = 128;
+    } else if (cu_count >= (gpu_info.IsApple() ? 12 : 16)) {
       y_size_multiplier = 2;
-    } else {
-      wg_total_size = 64;
-    }
-  }
-  if (gpu_info.IsAMD()) {
-    wg_total_size = 128;
-    const int cu_count = gpu_info.GetComputeUnitsCount();
-    if (cu_count >= 32) {
-      y_size_multiplier = 4;
-    } else if (cu_count >= 16) {
-      y_size_multiplier = 2;
-    } else {
-      y_size_multiplier = 1;
-    }
-  }
-  if (gpu_info.IsIntel()) {
-    wg_total_size = 128;
-    y_size_multiplier = block_spatial > 1 ? 2 : 4;
-  }
-  if (gpu_info.IsAdreno()) {
-    if (gpu_info.adreno_info.IsAdreno3xx() ||
-        gpu_info.adreno_info.IsAdreno4xx() ||
-        gpu_info.adreno_info.IsAdreno5xx()) {
-      wg_total_size = 64;
-    } else {
-      wg_total_size = 128;
-    }
-    if (is_quantized &&
-        gpu_info.adreno_info.generation >= AdrenoInfo::Generation::kGen7) {
-      wg_total_size = 256;
-    }
-    if (gpu_info.adreno_info.IsLowEnd()) {
-      wg_total_size = std::min(wg_total_size, 32);
-    }
-  }
-  if (gpu_info.IsNvidia()) {
-    const int cu_count = gpu_info.GetComputeUnitsCount();
-    if (cu_count >= 32) {
-      wg_total_size = 256;
-      y_size_multiplier = 4;
-    } else if (cu_count >= 16) {
-      wg_total_size = 128;
-      y_size_multiplier = 2;
-    } else {
-      wg_total_size = 128;
     }
   }
   int y_size = 8;
@@ -333,18 +317,9 @@ int3 GetWorkGroupSize(const FullyConnected::ConvParams& params,
     x_size = 1;
     y_size = 64;
   }
-  while (y_size > max_y_size && y_size > 1 && x_size < dst_slices) {
-    y_size /= 2;
-    x_size *= 2;
-  }
-  const int cu_count = gpu_info.GetComputeUnitsCount();
-  while ((x_size > dst_slices ||
-          (total_task_size / x_size < cu_count && y_size * 2 <= max_y_size)) &&
-         x_size > 1 && y_size * 2 <= wg_total_size) {
-    x_size /= 2;
-    y_size *= 2;
-  }
-  return int3(x_size, y_size, 1);
+  return RebalanceWorkGroupSize(x_size, y_size, wg_total_size, max_y_size,
+                                dst_slices, total_task_size,
+                                gpu_info.GetComputeUnitsCount());
 }
 }  // namespace
 

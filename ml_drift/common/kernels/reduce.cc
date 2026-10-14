@@ -43,15 +43,11 @@ namespace {
 int GetMaximumWGTotalSize(const GpuInfo& gpu_info) {
   // total_wg_size must be power of 2 and >= 4;
   int total_wg_size = 256;
-  if (gpu_info.IsAdreno() && gpu_info.adreno_info.IsAdreno3xx()) {
-    total_wg_size = 128;
-  }
-  if (gpu_info.IsMali()) {
-    const MaliInfo& mali_info = gpu_info.mali_info;
-    if (mali_info.IsMidgard()) {
-      total_wg_size = 32;
-    } else {
-      total_wg_size = 64;
+  if (gpu_info.IsMobileGpu()) {
+    if (gpu_info.IsAdreno() && gpu_info.adreno_info.IsAdreno3xx()) {
+      total_wg_size = 128;
+    } else if (gpu_info.IsMali()) {
+      total_wg_size = gpu_info.mali_info.IsMidgard() ? 32 : 64;
     }
   }
   return total_wg_size;

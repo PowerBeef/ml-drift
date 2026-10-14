@@ -947,6 +947,9 @@ struct GpuInfo {
   bool IsMaleoon() const;
   bool IsLlvmPipe() const;
 
+  bool IsMobileGpu() const;
+  bool IsDesktopGpu() const;
+
   bool IsGlsl() const;
   bool IsGlslSupportsExplicitFp16() const;
 

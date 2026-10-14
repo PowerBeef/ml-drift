@@ -307,5 +307,84 @@ TEST(PowerVRInfoTest, TestGpuVersionParsing) {
   EXPECT_FALSE(unknown.IsBetterThan(PowerVRGpu::kRogueGe8xxx));
 }
 
+TEST(GpuInfoTest, IsMobileGpu) {
+  for (GpuVendor vendor :
+       {GpuVendor::kQualcomm, GpuVendor::kMali, GpuVendor::kPowerVR,
+        GpuVendor::kHuawei, GpuVendor::kBroadcom}) {
+    GpuInfo info;
+    info.vendor = vendor;
+    EXPECT_TRUE(info.IsMobileGpu());
+    EXPECT_FALSE(info.IsDesktopGpu());
+  }
+
+  GpuInfo apple_a15;
+  apple_a15.vendor = GpuVendor::kApple;
+  apple_a15.apple_info.gpu_type = AppleGpu::kA15;
+  EXPECT_TRUE(apple_a15.IsMobileGpu());
+  EXPECT_FALSE(apple_a15.IsDesktopGpu());
+
+  GpuInfo apple_unknown_small;
+  apple_unknown_small.vendor = GpuVendor::kApple;
+  apple_unknown_small.gpu_api = GpuApi::kMetal;
+  apple_unknown_small.apple_info.gpu_type = AppleGpu::kUnknown;
+  EXPECT_TRUE(apple_unknown_small.IsMobileGpu());
+  EXPECT_FALSE(apple_unknown_small.IsDesktopGpu());
+
+  GpuInfo opencl_arm_ext;
+  opencl_arm_ext.vendor = GpuVendor::kUnknown;
+  opencl_arm_ext.gpu_api = GpuApi::kOpenCl;
+  opencl_arm_ext.opencl_info.supports_register_allocation_arm = true;
+  EXPECT_TRUE(opencl_arm_ext.IsMobileGpu());
+  EXPECT_FALSE(opencl_arm_ext.IsDesktopGpu());
+}
+
+TEST(GpuInfoTest, IsDesktopGpu) {
+  for (GpuVendor vendor :
+       {GpuVendor::kAMD, GpuVendor::kNvidia, GpuVendor::kIntel}) {
+    GpuInfo info;
+    info.vendor = vendor;
+    EXPECT_TRUE(info.IsDesktopGpu());
+    EXPECT_FALSE(info.IsMobileGpu());
+  }
+
+  GpuInfo cuda_info;
+  cuda_info.vendor = GpuVendor::kUnknown;
+  cuda_info.gpu_api = GpuApi::kCuda;
+  EXPECT_TRUE(cuda_info.IsDesktopGpu());
+  EXPECT_FALSE(cuda_info.IsMobileGpu());
+
+  GpuInfo apple_m1;
+  apple_m1.vendor = GpuVendor::kApple;
+  apple_m1.apple_info.gpu_type = AppleGpu::kM1;
+  EXPECT_TRUE(apple_m1.IsDesktopGpu());
+  EXPECT_FALSE(apple_m1.IsMobileGpu());
+
+  GpuInfo apple_unknown_large;
+  apple_unknown_large.vendor = GpuVendor::kApple;
+  apple_unknown_large.gpu_api = GpuApi::kOpenCl;
+  apple_unknown_large.opencl_info.compute_units_count = 16;
+  EXPECT_TRUE(apple_unknown_large.IsDesktopGpu());
+  EXPECT_FALSE(apple_unknown_large.IsMobileGpu());
+
+  GpuInfo opencl_desktop_fallback;
+  opencl_desktop_fallback.vendor = GpuVendor::kUnknown;
+  opencl_desktop_fallback.gpu_api = GpuApi::kOpenCl;
+  opencl_desktop_fallback.opencl_info.dedicated_local_memory = true;
+  opencl_desktop_fallback.opencl_info.compute_units_count = 16;
+  EXPECT_TRUE(opencl_desktop_fallback.IsDesktopGpu());
+  EXPECT_FALSE(opencl_desktop_fallback.IsMobileGpu());
+}
+
+TEST(GpuInfoTest, UnclassifiedGpuIsNeitherMobileNorDesktop) {
+  GpuInfo unknown_info;
+  EXPECT_FALSE(unknown_info.IsMobileGpu());
+  EXPECT_FALSE(unknown_info.IsDesktopGpu());
+
+  GpuInfo llvmpipe_info;
+  llvmpipe_info.vendor = GpuVendor::kLlvmPipe;
+  EXPECT_FALSE(llvmpipe_info.IsMobileGpu());
+  EXPECT_FALSE(llvmpipe_info.IsDesktopGpu());
+}
+
 }  // namespace
 }  // namespace ml_drift

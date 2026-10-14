@@ -1538,6 +1538,47 @@ bool GpuInfo::IsIntel() const { return vendor == GpuVendor::kIntel; }
 
 bool GpuInfo::IsMaleoon() const { return vendor == GpuVendor::kHuawei; }
 
+bool GpuInfo::IsMobileGpu() const {
+  if (IsAdreno() || IsMali() || IsPowerVR() || IsMaleoon() || IsBroadcom()) {
+    return true;
+  }
+  if (IsApple()) {
+    if (apple_info.IsMSeries()) {
+      return false;
+    }
+    if (apple_info.gpu_type != AppleGpu::kUnknown) {
+      return true;
+    }
+    return GetComputeUnitsCount() < 10;
+  }
+  if (vendor == GpuVendor::kUnknown && IsApiOpenCl() &&
+      opencl_info.supports_register_allocation_arm) {
+    return true;
+  }
+  return false;
+}
+
+bool GpuInfo::IsDesktopGpu() const {
+  if (IsAMD() || IsNvidia() || IsIntel() || IsApiCuda()) {
+    return true;
+  }
+  if (IsApple()) {
+    if (apple_info.IsMSeries()) {
+      return true;
+    }
+    if (apple_info.gpu_type != AppleGpu::kUnknown) {
+      return false;
+    }
+    return GetComputeUnitsCount() >= 10;
+  }
+  if (vendor == GpuVendor::kUnknown && IsApiOpenCl() &&
+      opencl_info.dedicated_local_memory &&
+      opencl_info.compute_units_count >= 16) {
+    return true;
+  }
+  return false;
+}
+
 bool GpuInfo::IsRoundToNearestSupported() const {
   if (IsApiOpenCl()) {
     return opencl_info.supports_fp16_rtn || opencl_info.supports_fp32_rtn;

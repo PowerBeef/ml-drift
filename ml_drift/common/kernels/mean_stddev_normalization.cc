@@ -121,58 +121,47 @@ int3 GetRecommendedWorkGroupSize(const GpuInfo& gpu_info, const BHWC& shape) {
   const int total_spatial_size = shape.b * shape.h * shape.w;
   const float spatial_per_cu =
       static_cast<float>(total_spatial_size) / gpu_info.GetComputeUnitsCount();
-  if (gpu_info.IsMali()) {
-    // Don't use more than 64 work items per work group on ARM Mali. They
-    // implement local memory using the global memory, larger workgroups have
-    // severe performance penalty.
+  if (gpu_info.IsMobileGpu()) {
+    // Default mobile baseline: don't use more than 64 work items per work
+    // group on ARM Mali / PowerVR / mobile Apple (local memory penalties).
     desired_work_group_size = 64;
-  }
-  if (gpu_info.IsAdreno()) {
-    AdrenoInfo info = gpu_info.adreno_info;
-    desired_work_group_size = 256;
-    if (info.IsAdreno3xx()) {
-      if (info.adreno_gpu == AdrenoGpu::kAdreno320 ||
-          info.adreno_gpu == AdrenoGpu::kAdreno330) {
-        desired_work_group_size = 128;
-      } else {
-        desired_work_group_size = 64;
-      }
-    } else if (info.IsAdreno4xx()) {
-      if (info.adreno_gpu == AdrenoGpu::kAdreno430) {
-        desired_work_group_size = 256;
-      } else {
-        desired_work_group_size = 128;
-      }
-    } else if (info.IsAdreno5xx()) {
-      if (info.adreno_gpu == AdrenoGpu::kAdreno530 ||
-          info.adreno_gpu == AdrenoGpu::kAdreno540) {
-        desired_work_group_size = 256;
-      } else {
-        desired_work_group_size = 128;
-      }
-    }
-  }
-  if (gpu_info.IsPowerVR()) {
-    desired_work_group_size = 64;
-  }
-  if (gpu_info.IsApple()) {
-    if (gpu_info.GetComputeUnitsCount() < 10) {
-      desired_work_group_size = 64;
-    } else {
-      desired_work_group_size = 128;
-    }
-  }
-  if (gpu_info.IsAMD()) {
-    if (spatial_per_cu > 16) {
-      desired_work_group_size = 512;
-    } else if (spatial_per_cu > 8) {
+    if (gpu_info.IsAdreno()) {
+      AdrenoInfo info = gpu_info.adreno_info;
       desired_work_group_size = 256;
-    } else {
-      desired_work_group_size = 128;
+      if (info.IsAdreno3xx()) {
+        if (info.adreno_gpu == AdrenoGpu::kAdreno320 ||
+            info.adreno_gpu == AdrenoGpu::kAdreno330) {
+          desired_work_group_size = 128;
+        } else {
+          desired_work_group_size = 64;
+        }
+      } else if (info.IsAdreno4xx()) {
+        if (info.adreno_gpu == AdrenoGpu::kAdreno430) {
+          desired_work_group_size = 256;
+        } else {
+          desired_work_group_size = 128;
+        }
+      } else if (info.IsAdreno5xx()) {
+        if (info.adreno_gpu == AdrenoGpu::kAdreno530 ||
+            info.adreno_gpu == AdrenoGpu::kAdreno540) {
+          desired_work_group_size = 256;
+        } else {
+          desired_work_group_size = 128;
+        }
+      }
     }
-  }
-  if (gpu_info.IsIntel()) {
+  } else if (gpu_info.IsDesktopGpu()) {
+    // Default desktop baseline: 128 work items per work group.
     desired_work_group_size = 128;
+    if (gpu_info.IsAMD()) {
+      if (spatial_per_cu > 16) {
+        desired_work_group_size = 512;
+      } else if (spatial_per_cu > 8) {
+        desired_work_group_size = 256;
+      }
+    } else if (gpu_info.IsNvidia()) {
+      desired_work_group_size = gpu_info.GetMaxWorkGroupSizeForZ();
+    }
   }
   int3 work_group_size(1, 1, 1);
   if (spatial_per_cu < 2.0f) {

@@ -102,25 +102,23 @@ Softmax1x1::Softmax1x1(const OperationDef& definition, const GpuInfo& gpu_info,
                        const SoftmaxRuntimeCheckDesc& runtime_check)
     : reduce_only_(reduce_only), runtime_check_(runtime_check) {
   // work_group_size_.x must be power of 2
-  if (gpu_info.IsAdreno()) {
-    if (gpu_info.adreno_info.IsAdreno3xx()) {
-      work_group_size_ = int3(32, 1, 1);
-    } else if (gpu_info.adreno_info.IsAdreno4xx()) {
-      work_group_size_ = int3(64, 1, 1);
-    } else if (gpu_info.adreno_info.IsAdreno5xx()) {
-      work_group_size_ = int3(128, 1, 1);
-    } else {
-      // Adreno 6xx and later
-      work_group_size_ = int3(512, 1, 1);
+  work_group_size_ = int3(256, 1, 1);
+  if (gpu_info.IsMobileGpu()) {
+    if (gpu_info.IsAdreno()) {
+      if (gpu_info.adreno_info.IsAdreno3xx()) {
+        work_group_size_ = int3(32, 1, 1);
+      } else if (gpu_info.adreno_info.IsAdreno4xx()) {
+        work_group_size_ = int3(64, 1, 1);
+      } else if (gpu_info.adreno_info.IsAdreno5xx()) {
+        work_group_size_ = int3(128, 1, 1);
+      } else {
+        // Adreno 6xx and later
+        work_group_size_ = int3(512, 1, 1);
+      }
+    } else if (gpu_info.IsMali()) {
+      work_group_size_ =
+          int3(gpu_info.mali_info.IsMidgard() ? 128 : 1024, 1, 1);
     }
-  } else if (gpu_info.IsMali()) {
-    if (gpu_info.mali_info.IsMidgard()) {
-      work_group_size_ = int3(128, 1, 1);
-    } else {
-      work_group_size_ = int3(1024, 1, 1);
-    }
-  } else {
-    work_group_size_ = int3(256, 1, 1);
   }
   const int end_slice = DivideRoundUp(shape.c, 4);
   while (work_group_size_.x >= end_slice * 2) {
