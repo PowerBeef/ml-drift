@@ -46,6 +46,10 @@ void AddRuntimeParams(GPUOperation& op,
     op.args_.AddInt("dst_end_ch_index", *runtime_check.dst_end_ch_index);
     has_runtime_check = true;
   }
+  if (runtime_check.window_pos_index.has_value()) {
+    op.args_.AddInt("window_pos_index", *runtime_check.window_pos_index);
+    has_runtime_check = true;
+  }
   if (runtime_check.packed_groups.has_value()) {
     op.args_.AddInt("packed_params_offset",
                     runtime_check.packed_groups->params_offset);
@@ -191,6 +195,20 @@ MAIN_FUNCTION($0) {
     c += "  if (slice_tile_id * N_TILE_SLICES >= dst_end_slice_runtime) "
          "return;\n";
   }
+  // Agello (T4): a sliding attention window (ConvRuntimeCheckDesc), with manual
+  // K tiling and 1x1 kernels. A PV product starts its K loop at the window (a
+  // whole K tile: the start is 32-aligned); a QK product runs no K iterations for
+  // tiles of keys wholly below it, so they hold the epilogue applied to zero (a
+  // fused attention mask masks them). Uniform per threadgroup.
+  const ConvRuntimeCheckDesc& window = params_.runtime_check;
+  const bool use_window = window.window_pos_index.has_value() &&
+                          manual_k_tiling && params_.x_kernel_is_1 &&
+                          params_.y_kernel_is_1 &&
+                          !window.packed_groups.has_value();
+  if (use_window && (window.src_window || window.dst_window)) {
+    c += "  int window_start_slice = " +
+         RuntimeWindowStartSlice(window.window_size) + ";\n";
+  }
   if (weights_conversion) {
     ABSL_CHECK(n_tile_ == 64);
     ABSL_CHECK(k_tile == 32);
@@ -323,7 +341,20 @@ MAIN_FUNCTION($0) {
     c += "  half2 exp_val = args.src_exp.Read(src_x, src_y, 0).xy;\n";
   }
   if (manual_k_tiling) {
-    c += "  for (int k = 0; k < " + src_end_slice + "; k += K_TILE_SLICES) {\n";
+    std::string k_start = "0";
+    std::string k_end = src_end_slice;
+    if (use_window && window.src_window) {
+      k_start = "window_start_slice";
+      if (weights_conversion) {
+        c += "  w_wg_offset += (window_start_slice / K_TILE_SLICES) * w_stride;\n";
+      }
+    }
+    if (use_window && window.dst_window) {
+      c += "  int k_end = (slice_tile_id + 1) * N_TILE_SLICES <= window_start_slice ? 0 : " +
+           src_end_slice + ";\n";
+      k_end = "k_end";
+    }
+    c += "  for (int k = " + k_start + "; k < " + k_end + "; k += K_TILE_SLICES) {\n";
     if (weights_conversion) {
       if (params_.weights_data_type == DataType::kFloat16) {
         c += "    half4 w0, w1, w2, w3;\n";
