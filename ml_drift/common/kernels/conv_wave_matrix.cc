@@ -572,7 +572,61 @@ std::string GenerateConvolution(
       c += "  }\n";
     }
   }
-  c += "  for (int s = 0; s < " + src_slices_count +
+  // Agello (T4): a sliding attention window (ConvRuntimeCheckDesc), 1x1 kernels
+  // only. A PV product (src_window) starts its K loop at the window's first
+  // slice, rounded down to the K step, with the weights and a linear source
+  // advanced to it; a QK product (dst_window) runs no K iterations in workgroups
+  // whose keys all lie below the window, so they hold the epilogue applied to
+  // zero (a fused attention mask masks them). Uniform per workgroup, so the
+  // loop's barriers stay matched. Keys below the window are masked, so starting
+  // at a lower slice than the window's stays correct.
+  const ConvRuntimeCheckDesc& window = conv_params.runtime_check;
+  const bool use_window =
+      window.window_pos_index.has_value() &&
+      (window.src_window || window.dst_window) && conv_params.x_kernel_is_1 &&
+      conv_params.y_kernel_is_1 && conv_params.z_kernel_is_1 &&
+      !window.packed_groups.has_value();
+  std::string k_start = "0";
+  std::string k_end = src_slices_count;
+  if (use_window) {
+    c += "  int window_start_slice = " +
+         RuntimeWindowStartSlice(window.window_size) + ";\n";
+  }
+  if (use_window && window.src_window) {
+    const std::string k_step = std::to_string(src_x4_slices);
+    c += "  int k_start = (window_start_slice / " + k_step + ") * " + k_step +
+         ";\n";
+    if (weights_conversion) {
+      const int i4o4_blocks = src_x4_slices * dst_x4_slices;
+      if (i4o4_blocks < kernel_params.wave_size) {
+        c += "  if (spatial_id < " + std::to_string(i4o4_blocks) + ") {\n";
+      }
+      c += "  w_sg_offset += (k_start / " + k_step + ") * stride;\n";
+      if (i4o4_blocks < kernel_params.wave_size) {
+        c += "  }\n";
+      }
+    } else {
+      c += "  weights_wgs_offset += (k_start / " + k_step +
+           ") * WM_N * WM_K * " +
+           std::to_string(src_xK_slices * dst_xN_slices) + ";\n";
+    }
+    if (src_def.IsLinear()) {
+      c += "  src_address += args.src_tensor.SliceStride() * k_start;\n";
+    }
+    k_start = "k_start";
+  }
+  if (use_window && window.dst_window) {
+    const int s_dimension = kernel_params.linear_spatial ? 1 : 2;
+    c += "  int dst_s_wg_end = (" +
+         GetWorkGroupBaseDstS(kernel_params.work_group_launch_order,
+                              kernel_params.linear_spatial) +
+         " + ucl::GetGroupSize<" + std::to_string(s_dimension) + ">()) * " +
+         std::to_string(kernel_params.dst_slices_per_thread) + ";\n";
+    c += "  int k_end = dst_s_wg_end <= window_start_slice ? 0 : " +
+         src_slices_count + ";\n";
+    k_end = "k_end";
+  }
+  c += "  for (int s = " + k_start + "; s < " + k_end +
        "; s += " + std::to_string(src_x4_slices) + ") {\n";
   const DataType right_matrix_type = conv_params.weights_data_type;
   for (int src_s = 0; src_s < src_xK_slices; ++src_s) {
@@ -1067,6 +1121,10 @@ void AddRuntimeParams(GPUOperation& op,
   }
   if (runtime_check.dst_end_ch_index.has_value()) {
     op.args_.AddInt("dst_end_ch_index", *runtime_check.dst_end_ch_index);
+    has_runtime_check = true;
+  }
+  if (runtime_check.window_pos_index.has_value()) {
+    op.args_.AddInt("window_pos_index", *runtime_check.window_pos_index);
     has_runtime_check = true;
   }
   if (runtime_check.packed_groups.has_value()) {
