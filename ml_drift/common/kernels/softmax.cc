@@ -82,11 +82,11 @@ std::string GetSoftmaxReducedExp(const OperationDef& op_def,
   c += "  float maximum;\n";
   c += "  args.src_tensor.ReadPerChannel<float>(maximum, " + coords_s0 + ");\n";
   if (use_wg_reduction) {
-    c += "  for (int d = ucl::GetLocalId<2>(); d < end_slice; d "
+    c += "  for (int d = START_SLICE + ucl::GetLocalId<2>(); d < end_slice; d "
          "+= WG_SIZE_Z) "
          "{\n";
   } else {
-    c += "  for (int d = 0; d < end_slice; d += 1) {\n";
+    c += "  for (int d = START_SLICE; d < end_slice; d += 1) {\n";
   }
   c += "    float4 mask_dot = ucl::Init<float4>(1.0f);\n";
   c += "    float4 src = args.src_tensor.Read<float>(" + coords_s + ");\n";
@@ -193,8 +193,14 @@ Softmax CreateSoftmaxImpl(const OperationDef& definition,
                           const SoftmaxRuntimeCheckDesc& runtime_check) {
   auto softmax =
       Softmax(definition, gpu_info, shape, reduce_only, runtime_check);
-  if (runtime_check.end_ch_index.has_value()) {
-    softmax.args_.AddInt("end_ch_index", *runtime_check.end_ch_index);
+  if (runtime_check.window_pos_index.has_value()) {
+    softmax.args_.AddInt("window_pos_index", *runtime_check.window_pos_index);
+  }
+  if (runtime_check.end_ch_index.has_value() ||
+      runtime_check.window_pos_index.has_value()) {
+    if (runtime_check.end_ch_index.has_value()) {
+      softmax.args_.AddInt("end_ch_index", *runtime_check.end_ch_index);
+    }
     BufferDescriptor buffer_desc;
     buffer_desc.element_type = DataType::kInt32;
     buffer_desc.element_size = 1;
@@ -308,8 +314,14 @@ Softmax::Softmax(const OperationDef& definition, const GpuInfo& gpu_info,
             "args.src_tensor.Channels())"
           : "args.src_tensor.Channels()";
   const std::string exp_func = gpu_info.IsApiOpenCl() ? "native_exp" : "exp";
+  // Agello (T4): the reduction starts at the sliding window, if any.
+  const std::string start_slice =
+      runtime_check.window_pos_index.has_value()
+          ? RuntimeWindowStartSlice(runtime_check.window_size)
+          : "0";
   absl::StrReplaceAll({{"EXP_FUNC", exp_func},
                        {"END_CHANNEL", end_channel},
+                       {"START_SLICE", start_slice},
                        {"WG_SIZE_X", std::to_string(work_group_size_.x)},
                        {"WG_SIZE_Y", std::to_string(work_group_size_.y)},
                        {"WG_SIZE_Z", std::to_string(work_group_size_.z)}},

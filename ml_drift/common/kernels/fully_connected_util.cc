@@ -67,6 +67,10 @@ void AddRuntimeParam(const ConvRuntimeCheckDesc& runtime_check,
     op->args_.AddInt("ring_i_offset_index", *runtime_check.ring_i_offset_index);
     has_runtime_check = true;
   }
+  if (runtime_check.window_pos_index.has_value()) {
+    op->args_.AddInt("window_pos_index", *runtime_check.window_pos_index);
+    has_runtime_check = true;
+  }
   if (has_runtime_check) {
     BufferDescriptor desc;
     desc.element_type = DataType::kInt32;

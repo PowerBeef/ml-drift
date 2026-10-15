@@ -85,8 +85,15 @@ Softmax1x1 CreateSoftmax1x1Impl(const OperationDef& definition,
                                 const SoftmaxRuntimeCheckDesc& runtime_check) {
   auto softmax1x1 =
       Softmax1x1(definition, gpu_info, shape, reduce_only, runtime_check);
-  if (runtime_check.end_ch_index.has_value()) {
-    softmax1x1.args_.AddInt("end_ch_index", *runtime_check.end_ch_index);
+  if (runtime_check.window_pos_index.has_value()) {
+    softmax1x1.args_.AddInt("window_pos_index",
+                            *runtime_check.window_pos_index);
+  }
+  if (runtime_check.end_ch_index.has_value() ||
+      runtime_check.window_pos_index.has_value()) {
+    if (runtime_check.end_ch_index.has_value()) {
+      softmax1x1.args_.AddInt("end_ch_index", *runtime_check.end_ch_index);
+    }
     BufferDescriptor buffer_desc;
     buffer_desc.element_type = DataType::kInt32;
     buffer_desc.element_size = 1;
@@ -186,7 +193,7 @@ std::string Softmax1x1::GetSoftmaxKernelCode(const OperationDef& op_def,
        "% 4 != 0;\n";
   c += "  float maximum;\n";
   c += "  args.src_tensor.ReadPerChannel<float>(maximum, " + coords_s0 + ");\n";
-  c += "  for (int s = tid; s < end_slice; s += "
+  c += "  for (int s = START_SLICE + tid; s < end_slice; s += "
        "GROUP_REDUCTION_SIZE) {\n";
   c += "    float4 mask_dot = ucl::Init<float4>(1.0f);\n";
   c += "    float4 src = args.src_tensor.Read<float>(" + coords_s + ");\n";
@@ -266,9 +273,15 @@ std::string Softmax1x1::GetSoftmaxKernelCode(const OperationDef& op_def,
           ? "min(args.params.Read(args.end_ch_index), "
             "args.src_tensor.Channels())"
           : "args.src_tensor.Channels()";
+  // Agello (T4): the reduction starts at the sliding window, if any.
+  const std::string start_slice =
+      runtime_check_.window_pos_index.has_value()
+          ? RuntimeWindowStartSlice(runtime_check_.window_size)
+          : "0";
   absl::StrReplaceAll(
       {{"EXP_FUNC", exp_func},
        {"END_CHANNEL", end_channel},
+       {"START_SLICE", start_slice},
        {"GROUP_REDUCTION_SIZE", std::to_string(work_group_size_.x)}},
       &c);
   return c;

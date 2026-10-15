@@ -699,7 +699,26 @@ std::string FullyConnected::GetFullyConnectedKernelCode(
                                         conv_params_.weights_type);
     }
   }
-  const std::string start_slice = wg_reduction_ ? "tid.y" : "0";
+  std::string start_slice = wg_reduction_ ? "tid.y" : "0";
+  // Agello (T4): a sliding attention window (ConvRuntimeCheckDesc). A PV product
+  // starts reading at the window; a QK product skips the reduction for keys
+  // below it, so their epilogue (a fused attention mask) masks them.
+  const ConvRuntimeCheckDesc& window = conv_params_.runtime_check;
+  if (window.window_pos_index.has_value() && !is_block_quantized &&
+      !window.packed_groups.has_value()) {
+    if (window.src_window) {
+      c += "  int src_start_slice = " +
+           RuntimeWindowStartSlice(window.window_size) + ";\n";
+      start_slice = wg_reduction_ ? "src_start_slice + tid.y" : "src_start_slice";
+    }
+    if (window.dst_window) {
+      c += "  int dst_start_slice = " +
+           RuntimeWindowStartSlice(window.window_size) + ";\n";
+      c += "  int src_loop_end = dst_s < dst_start_slice ? 0 : " +
+           src_end_slices + ";\n";
+      src_end_slices = "src_loop_end";
+    }
+  }
   const std::string slice_stride = wg_reduction_ ? "WG_SIZE_Y" : "1";
   if (is_block_quantized) {
     c += "  for (int src_group_id = " + start_slice +

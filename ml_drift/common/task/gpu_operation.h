@@ -388,7 +388,8 @@ struct ConvRuntimeCheckDesc {
   static constexpr int kChannelsAlignment = 32;
 
   bool HasValues() const {
-    return src_end_ch_index.has_value() || dst_end_ch_index.has_value();
+    return src_end_ch_index.has_value() || dst_end_ch_index.has_value() ||
+           window_pos_index.has_value();
   }
   int GetSlicesAlignment() const;
   std::string GetRuntimeEndSlice(const std::string& channels,
@@ -409,6 +410,20 @@ struct ConvRuntimeCheckDesc {
   std::optional<int> ring_o_offset_index = std::nullopt;
   std::optional<int> ring_i_offset_index = std::nullopt;
   std::optional<int> ring_size = std::nullopt;
+
+  // Agello (T4): a sliding attention window. With `window_pos_index` and
+  // `window_size`, the window starts at the channel RuntimeWindowStartSlice
+  // computes from params[window_pos_index] (the first new token's position),
+  // for the destination channels (`dst_window`: a QK product's keys) or the
+  // source channels (`src_window`: a PV product's keys). Destination slices
+  // below it skip the reduction, so they hold the epilogue applied to zero (an
+  // attention mask fused there masks them); source slices below it aren't
+  // read. Kernels that don't implement it compute every channel, which stays
+  // correct while the keys below the window are masked.
+  std::optional<int> window_pos_index = std::nullopt;
+  int window_size = 0;
+  bool dst_window = false;
+  bool src_window = false;
 };
 
 // A struct to allow runtime-configurable channel bounds with softmax ops.
@@ -422,7 +437,19 @@ struct ConvRuntimeCheckDesc {
 // tensor values that are within bounds.
 struct SoftmaxRuntimeCheckDesc {
   std::optional<int> end_ch_index = std::nullopt;
+  // Agello (T4): a sliding attention window (see ConvRuntimeCheckDesc): the
+  // reduction starts at RuntimeWindowStartSlice. The channels below it must
+  // hold masked values (a bounded QK product writes them).
+  std::optional<int> window_pos_index = std::nullopt;
+  int window_size = 0;
 };
+
+// Agello (T4): the first slice of a sliding attention window, as kernel code
+// reading args.params and args.window_pos_index: channel
+// max(0, params[window_pos_index] - window_size + 1), rounded down to
+// ConvRuntimeCheckDesc::kChannelsAlignment, so every kernel bounding the same
+// attention starts at the same slice.
+std::string RuntimeWindowStartSlice(int window_size);
 
 }  // namespace ml_drift
 

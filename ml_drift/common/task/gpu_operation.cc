@@ -1820,4 +1820,11 @@ std::string ConvRuntimeCheckDesc::GetRuntimeEndSlice(
                           kChannelsAlignment, max_slices);
 }
 
+std::string RuntimeWindowStartSlice(int window_size) {
+  return absl::Substitute(
+      "((max(0, args.params.Read(args.window_pos_index) - $0) / $1) * $2)",
+      window_size - 1, ConvRuntimeCheckDesc::kChannelsAlignment,
+      ConvRuntimeCheckDesc::kChannelsAlignment / 4);
+}
+
 }  // namespace ml_drift
