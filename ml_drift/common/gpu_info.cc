@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <cstdlib>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1362,7 +1363,16 @@ void GetGpuInfoFromDeviceDescription(const std::string& gpu_description,
   if (gpu_info->IsAdreno()) {
     gpu_info->adreno_info = GetAdrenoInfo(lowered);
   } else if (gpu_info->IsApple()) {
-    gpu_info->apple_info = AppleInfo(lowered);
+    // Agello: AGELLO_SIMULATE_APPLE_GPU (a name such as "Apple A17 Pro") makes every family and
+    // core-count decision follow that GPU instead, to run another device's kernel paths on this
+    // one. Speed and the hardware's own arithmetic stay this device's.
+    std::string apple_name = lowered;
+    if (const char* simulated = std::getenv("AGELLO_SIMULATE_APPLE_GPU");
+        simulated != nullptr && *simulated != '\0') {
+      apple_name = simulated;
+      absl::AsciiStrToLower(&apple_name);
+    }
+    gpu_info->apple_info = AppleInfo(apple_name);
     gpu_info->supported_wave_sizes = {32};
   } else if (gpu_info->IsBroadcom()) {
     gpu_info->broadcom_info = GetBroadcomInfo(lowered);
